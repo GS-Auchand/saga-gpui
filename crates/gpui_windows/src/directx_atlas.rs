@@ -162,8 +162,8 @@ impl DirectXAtlasTextures {
         kind: AtlasTextureKind,
     ) -> Option<&mut DirectXAtlasTexture> {
         const DEFAULT_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(1024),
-            height: DevicePixels(1024),
+            width: DevicePixels(256),
+            height: DevicePixels(256),
         };
         // Max texture size for DirectX. See:
         // https://learn.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-resources-limits
