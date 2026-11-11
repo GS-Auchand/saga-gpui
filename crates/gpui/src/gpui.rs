@@ -46,6 +46,10 @@ mod keymap;
 mod path_builder;
 mod platform;
 mod platform_scheduler;
+#[cfg(feature = "test-support")]
+mod presentation_capture;
+#[cfg(feature = "test-support")]
+pub use presentation_capture::*;
 mod scene;
 mod shared_uri;
 mod spring;

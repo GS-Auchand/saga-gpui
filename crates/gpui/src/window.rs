@@ -1277,6 +1277,10 @@ pub struct Window {
         SingleSubscriberSet<Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    #[cfg(feature = "test-support")]
+    presentation_scene_sequence: u64,
+    #[cfg(feature = "test-support")]
+    presentation_caller_token: Option<u64>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -2399,6 +2403,10 @@ impl Window {
             visibility_observers: SingleSubscriberSet::new(),
             hovered,
             needs_present,
+            #[cfg(feature = "test-support")]
+            presentation_scene_sequence: 0,
+            #[cfg(feature = "test-support")]
+            presentation_caller_token: None,
             input_rate_tracker,
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
@@ -3747,6 +3755,14 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
+        #[cfg(feature = "test-support")]
+        {
+            self.presentation_scene_sequence += 1;
+            self.next_frame.scene.presentation_identity = Some(crate::PresentationScene {
+                scene_id: self.presentation_scene_sequence,
+                caller_token: self.presentation_caller_token,
+            });
+        }
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
@@ -3833,6 +3849,38 @@ impl Window {
             self.mark_view_dirty(entity);
         }
         self.invalidator.replace_views(views);
+    }
+
+    /// Set the model revision to attach to the next committed draw. Calling this
+    /// after a draw never changes the identity of the already committed scene.
+    #[cfg(feature = "test-support")]
+    pub fn set_presentation_token_for_test(&mut self, token: u64) {
+        self.presentation_caller_token = Some(token);
+    }
+
+    /// Enable diagnostics before collection. False means unsupported/already enabled.
+    #[cfg(feature = "test-support")]
+    pub fn enable_presentation_capture_for_test(&self, capacity: usize) -> bool {
+        self.platform_window
+            .enable_presentation_capture_for_test(capacity)
+    }
+
+    /// Drain records; an overflow count makes completeness unverifiable.
+    #[cfg(feature = "test-support")]
+    pub fn drain_presentation_capture_for_test(&self) -> crate::PlatformPresentSnapshot {
+        self.platform_window.drain_presentation_capture_for_test()
+    }
+
+    /// Sample QPC and its frequency without presenting or drawing.
+    #[cfg(feature = "test-support")]
+    pub fn presentation_clock_for_test(&self) -> Option<crate::PlatformPresentationClock> {
+        self.platform_window.presentation_clock_for_test()
+    }
+
+    /// Identity of the latest committed scene, whether presented or superseded.
+    #[cfg(feature = "test-support")]
+    pub fn last_presentation_scene_for_test(&self) -> Option<crate::PresentationScene> {
+        self.rendered_frame.scene.presentation_identity
     }
 
     #[profiling::function]

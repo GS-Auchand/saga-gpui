@@ -54,6 +54,10 @@ pub(crate) struct DirectXRenderer {
     /// In that case we want to discard the first frame that we draw as we got reset in the middle of a frame
     /// meaning we lost all the allocated gpu textures and scene resources.
     skip_draws: bool,
+    #[cfg(feature = "test-support")]
+    pub(crate) presentation_journal: PresentationJournal,
+    #[cfg(feature = "test-support")]
+    swap_chain_generation: u64,
 }
 
 /// Direct3D objects
@@ -194,6 +198,10 @@ impl DirectXRenderer {
             width: 1,
             height: 1,
             skip_draws: false,
+            #[cfg(feature = "test-support")]
+            presentation_journal: PresentationJournal::default(),
+            #[cfg(feature = "test-support")]
+            swap_chain_generation: 1,
         })
     }
 
@@ -242,14 +250,50 @@ impl DirectXRenderer {
     }
 
     #[inline]
-    fn present(&mut self) -> Result<()> {
-        let result = unsafe {
-            self.resources
-                .as_ref()
-                .expect("resources missing")
-                .swap_chain
-                .Present(0, DXGI_PRESENT(0))
+    fn present(
+        &mut self,
+        #[cfg(feature = "test-support")] identity: Option<PresentationScene>,
+    ) -> Result<()> {
+        let swap_chain = &self
+            .resources
+            .as_ref()
+            .expect("resources missing")
+            .swap_chain;
+        #[cfg(feature = "test-support")]
+        let metadata = if self.presentation_journal.enabled() {
+            Some((
+                presentation_frequency_for_test(),
+                unsafe { windows::Win32::System::Threading::GetCurrentProcessId() },
+                unsafe { windows::Win32::System::Threading::GetCurrentThreadId() },
+                swap_chain.as_raw() as usize as u64,
+                self.hwnd.0 as usize as u64,
+            ))
+        } else {
+            None
         };
+        #[cfg(feature = "test-support")]
+        let start = metadata.as_ref().and_then(|_| presentation_qpc_for_test());
+        let result = unsafe { swap_chain.Present(0, DXGI_PRESENT(0)) };
+        #[cfg(feature = "test-support")]
+        let end = metadata.as_ref().and_then(|_| presentation_qpc_for_test());
+        #[cfg(feature = "test-support")]
+        if let Some((frequency, process_id, thread_id, swap_chain, hwnd)) = metadata {
+            let identity = identity.unwrap_or_default();
+            self.presentation_journal.push(PlatformPresentRecord {
+                scene_id: identity.scene_id,
+                caller_token: identity.caller_token,
+                swap_chain_generation: self.swap_chain_generation,
+                qpc_start: start,
+                qpc_end: end,
+                qpc_frequency: frequency,
+                process_id,
+                thread_id,
+                swap_chain,
+                hwnd,
+                hresult: result.0,
+                ..Default::default()
+            });
+        }
         result.ok().context("Presenting swap chain failed")
     }
 
@@ -320,6 +364,10 @@ impl DirectXRenderer {
         }
         self.devices = Some(devices);
         self.resources = Some(resources);
+        #[cfg(feature = "test-support")]
+        {
+            self.swap_chain_generation += 1;
+        }
         self.globals = globals;
         self.pipelines = pipelines;
         self.direct_composition = direct_composition;
@@ -338,7 +386,10 @@ impl DirectXRenderer {
             return Ok(());
         }
         self.render(scene, background_appearance)?;
-        self.present()
+        self.present(
+            #[cfg(feature = "test-support")]
+            scene.presentation_identity,
+        )
     }
 
     /// Clear the render target for `background_appearance` and encode every
@@ -2055,4 +2106,28 @@ mod dxgi {
             number & 0xFFFF
         ))
     }
+}
+
+#[cfg(feature = "test-support")]
+fn presentation_qpc_for_test() -> Option<u64> {
+    let mut counter = 0;
+    unsafe { windows::Win32::System::Performance::QueryPerformanceCounter(&mut counter) }.ok()?;
+    u64::try_from(counter).ok()
+}
+
+#[cfg(feature = "test-support")]
+fn presentation_frequency_for_test() -> Option<u64> {
+    let mut frequency = 0;
+    unsafe { windows::Win32::System::Performance::QueryPerformanceFrequency(&mut frequency) }
+        .ok()?;
+    u64::try_from(frequency).ok().filter(|value| *value > 0)
+}
+
+#[cfg(feature = "test-support")]
+pub(crate) fn presentation_clock_for_test() -> Option<PlatformPresentationClock> {
+    let frequency = presentation_frequency_for_test()?;
+    Some(PlatformPresentationClock {
+        qpc: presentation_qpc_for_test()?,
+        frequency,
+    })
 }

@@ -1054,6 +1054,29 @@ impl PlatformWindow for WindowsWindow {
     }
 
     #[cfg(feature = "test-support")]
+    fn enable_presentation_capture_for_test(&self, capacity: usize) -> bool {
+        self.state
+            .renderer
+            .borrow_mut()
+            .presentation_journal
+            .enable(capacity)
+    }
+
+    #[cfg(feature = "test-support")]
+    fn drain_presentation_capture_for_test(&self) -> PlatformPresentSnapshot {
+        self.state
+            .renderer
+            .borrow_mut()
+            .presentation_journal
+            .drain()
+    }
+
+    #[cfg(feature = "test-support")]
+    fn presentation_clock_for_test(&self) -> Option<PlatformPresentationClock> {
+        crate::directx_renderer::presentation_clock_for_test()
+    }
+
+    #[cfg(feature = "test-support")]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
         self.state
             .renderer

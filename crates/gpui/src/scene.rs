@@ -39,6 +39,9 @@ impl From<bool> for PaddedBool32 {
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
+    /// Diagnostic identity assigned when a Window commits this scene.
+    #[cfg(feature = "test-support")]
+    pub presentation_identity: Option<crate::PresentationScene>,
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
@@ -55,6 +58,10 @@ pub struct Scene {
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
+        #[cfg(feature = "test-support")]
+        {
+            self.presentation_identity = None;
+        }
         self.paint_operations.clear();
         self.primitive_bounds.clear();
         self.layer_stack.clear();

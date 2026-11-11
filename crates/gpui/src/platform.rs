@@ -1365,6 +1365,23 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
+
+    /// Enable bounded Present diagnostics; unsupported backends return false.
+    #[cfg(feature = "test-support")]
+    fn enable_presentation_capture_for_test(&self, _capacity: usize) -> bool {
+        false
+    }
+    /// Drain native Present records without implying display completion.
+    #[cfg(feature = "test-support")]
+    fn drain_presentation_capture_for_test(&self) -> crate::PlatformPresentSnapshot {
+        Default::default()
+    }
+    /// Sample the native presentation clock, where supported.
+    #[cfg(feature = "test-support")]
+    fn presentation_clock_for_test(&self) -> Option<crate::PlatformPresentationClock> {
+        None
+    }
+
     fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
