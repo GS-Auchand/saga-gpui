@@ -9,6 +9,10 @@ use std::{
 #[derive(Clone, Debug, Default, Serialize)]
 /// One native compositor wait and its optional fallback, sampled in the presentation QPC domain.
 pub struct FrameWaitTrace {
+    /// Original provider return before optional phase delay; includes any existing fallback sleep.
+    pub provider_return_qpc: Option<u64>,
+    /// Separate opt-in phase experiment; absent in earlier instrumentation or when not sampled.
+    pub phase_delay: Option<crate::PhaseDelayTrace>,
     /// Counter before entering the native compositor wait; None means clock failure.
     pub native_start_qpc: Option<u64>,
     /// Counter after the native compositor wait and elapsed-time measurement.

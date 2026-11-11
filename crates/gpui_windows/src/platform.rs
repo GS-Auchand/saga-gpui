@@ -442,6 +442,15 @@ impl WindowsPlatform {
             .name("VSyncProvider".to_owned())
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
+                #[cfg(feature = "test-support")]
+                let mut phase_delay = gpui::PhaseDelayController::new(
+                    std::env::var_os("GPUI_TEST_FRAME_PHASE_DELAY_US")
+                        .as_ref()
+                        .map(|value| value.to_str().unwrap_or("invalid")),
+                );
+                #[cfg(feature = "test-support")]
+                let mut phase_timer = crate::phase_delay::PhaseDelayTimer::default();
+
                 loop {
                     #[cfg(feature = "test-support")]
                     let trace_enabled = all_windows.upgrade().is_some_and(|windows| {
@@ -451,7 +460,7 @@ impl WindowsPlatform {
                             .any(|window| window.frame_signal.diagnostics.enabled())
                     });
                     #[cfg(feature = "test-support")]
-                    let (signal_source, wait_trace) = if trace_enabled {
+                    let (signal_source, mut wait_trace) = if trace_enabled {
                         let (source, trace) = vsync_provider.wait_for_vsync_traced();
                         (source, Some(trace))
                     } else {
@@ -460,6 +469,21 @@ impl WindowsPlatform {
                     #[cfg(not(feature = "test-support"))]
                     let signal_source = vsync_provider.wait_for_vsync();
                     let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
+                    #[cfg(feature = "test-support")]
+                    if let Some(trace) = &mut wait_trace {
+                        trace.provider_return_qpc =
+                            crate::directx_renderer::presentation_clock_for_test()
+                                .map(|sample| sample.qpc);
+                        trace.phase_delay = Some(phase_delay.run(
+                            &mut phase_timer,
+                            || {
+                                crate::directx_renderer::presentation_clock_for_test()
+                                    .map(|sample| sample.qpc)
+                            },
+                            || stop.load(Ordering::Acquire),
+                        ));
+                    }
+
                     if stop.load(Ordering::Acquire) {
                         break;
                     }

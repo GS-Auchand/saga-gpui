@@ -1,9 +1,9 @@
 #![cfg(target_os = "windows")]
 
 mod clipboard;
+mod credential_dialog;
 mod destination_list;
 mod dialog;
-mod credential_dialog;
 mod direct_manipulation;
 mod direct_write;
 mod directx_atlas;
@@ -13,6 +13,8 @@ mod dispatcher;
 mod display;
 mod events;
 mod keyboard;
+#[cfg(feature = "test-support")]
+mod phase_delay;
 mod platform;
 mod system_notifications;
 mod system_settings;

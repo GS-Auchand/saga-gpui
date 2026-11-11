@@ -37,6 +37,10 @@ mod elements;
 mod executor;
 #[cfg(feature = "test-support")]
 mod frame_signal_capture;
+#[cfg(feature = "test-support")]
+mod phase_delay;
+#[cfg(feature = "test-support")]
+pub use phase_delay::*;
 mod geometry;
 mod gestures;
 mod global;
