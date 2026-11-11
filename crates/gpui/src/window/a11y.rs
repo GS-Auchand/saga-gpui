@@ -145,6 +145,10 @@ pub(crate) struct A11y {
     /// At the end of the frame, we re-call [`Self::sync_active_flag`] to
     /// determine whether we should actually send the finished [`TreeUpdate`].
     active_this_frame: bool,
+    native_active_this_frame: bool,
+    synthetic_capture_this_frame: bool,
+    #[cfg(any(test, feature = "test-support"))]
+    synthetic_capture_for_test: bool,
     pub(crate) nodes: A11yNodeBuilder,
     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
@@ -173,6 +177,10 @@ impl A11y {
             force_disabled,
             active_flag,
             active_this_frame: false,
+            native_active_this_frame: false,
+            synthetic_capture_this_frame: false,
+            #[cfg(any(test, feature = "test-support"))]
+            synthetic_capture_for_test: false,
             nodes: A11yNodeBuilder::new(),
             focus_ids: FxHashMap::default(),
             node_bounds: FxHashMap::default(),
@@ -210,7 +218,35 @@ impl A11y {
     /// See the docs for [`Self::active_flag`] and [`Self::active_this_frame`]
     /// for more commentary.
     pub(crate) fn sync_active_flag(&mut self) {
-        self.active_this_frame = self.is_enabled() && self.active_flag.load(Ordering::SeqCst);
+        self.native_active_this_frame =
+            self.is_enabled() && self.active_flag.load(Ordering::SeqCst);
+        self.synthetic_capture_this_frame = self.synthetic_capture_for_test();
+        self.active_this_frame = self.native_active_this_frame
+            || (self.is_enabled() && self.synthetic_capture_this_frame);
+    }
+
+    pub(crate) fn synthetic_capture_this_frame(&self) -> bool {
+        self.synthetic_capture_this_frame
+    }
+
+    pub(crate) fn is_native_active(&self) -> bool {
+        self.native_active_this_frame
+    }
+
+    pub(crate) fn synthetic_capture_for_test(&self) -> bool {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.synthetic_capture_for_test
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            false
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_synthetic_capture_for_test(&mut self, enabled: bool) {
+        self.synthetic_capture_for_test = enabled;
     }
 
     pub(crate) fn is_enabled(&self) -> bool {
@@ -667,6 +703,24 @@ mod tests {
 
                 assert_eq!(a11y.is_enabled(), !force_disabled);
                 assert_eq!(a11y.is_active(), !force_disabled && active);
+            }
+        }
+    }
+
+    #[test]
+    fn synthetic_capture_preserves_native_activation_and_disabled_semantics() {
+        for force_disabled in [false, true] {
+            for native in [false, true] {
+                let flag = Arc::new(AtomicBool::new(native));
+                let mut a11y = A11y::new(flag.clone(), force_disabled, None);
+                a11y.set_synthetic_capture_for_test(true);
+                a11y.sync_active_flag();
+                assert_eq!(a11y.is_active(), !force_disabled);
+                assert_eq!(a11y.is_native_active(), native && !force_disabled);
+                assert_eq!(flag.load(Ordering::SeqCst), native);
+                a11y.set_synthetic_capture_for_test(false);
+                a11y.sync_active_flag();
+                assert_eq!(a11y.is_active(), native && !force_disabled);
             }
         }
     }

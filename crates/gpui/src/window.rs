@@ -4006,10 +4006,15 @@ impl Window {
 
         // a11y may have been activated/deactivated halfway through the frame
         let a11y_active_start_of_frame = self.a11y.is_active();
+        let native_a11y_active_start_of_frame = self.a11y.is_native_active();
+        let synthetic_capture_for_test = self.a11y.synthetic_capture_this_frame();
         self.a11y.sync_active_flag();
         let a11y_active_end_of_frame = self.a11y.is_active();
 
-        let should_send_a11y_update = a11y_active_start_of_frame && a11y_active_end_of_frame;
+        let should_send_a11y_update = a11y_active_start_of_frame
+            && a11y_active_end_of_frame
+            && native_a11y_active_start_of_frame
+            && self.a11y.is_native_active();
 
         if a11y_active_start_of_frame {
             // Harvest frame metadata for the debug dump while the live window
@@ -4018,6 +4023,9 @@ impl Window {
                 viewport_size: self.viewport_size,
                 scale_factor: self.scale_factor,
                 tab_stop_count: self.next_frame.tab_stops.tab_stop_count(),
+                synthetic_capture_for_test,
+                native_activation: native_a11y_active_start_of_frame
+                    && self.a11y.is_native_active(),
             };
             // clear the builder state regardless
             let tree_update = self.a11y.end_frame(frame_info);
@@ -7299,7 +7307,8 @@ impl Window {
 
     /// Returns whether accessibility features are active for this frame,
     /// i.e. whether assistive technology (such as a screen reader) is
-    /// connected and an accessibility tree is being built.
+    /// connected and an accessibility tree is being built. With `test-support`,
+    /// explicit synthetic capture can also build a tree without native activation.
     ///
     /// Use this to skip computing data during rendering that is only
     /// observable through the accessibility tree. When accessibility is
@@ -7309,6 +7318,28 @@ impl Window {
     /// See the [accessibility guide](crate::_accessibility) for an overview.
     pub fn is_a11y_active(&self) -> bool {
         self.a11y.is_active()
+    }
+
+    /// Enable synthetic accessibility tree capture for subsequent test frames.
+    /// Does not activate an OS adapter or establish assistive-technology access.
+    /// Inaccessible applications stay inaccessible. Refresh/draw a complete frame
+    /// before reading the debug tree; toggling this does not mutate a live frame.
+    #[cfg(feature = "test-support")]
+    pub fn set_synthetic_a11y_capture_for_test(&mut self, enabled: bool) {
+        self.a11y.set_synthetic_capture_for_test(enabled);
+        self.refresh();
+    }
+
+    /// Whether explicit synthetic test capture is requested for this window.
+    #[cfg(feature = "test-support")]
+    pub fn is_synthetic_a11y_capture_for_test(&self) -> bool {
+        self.a11y.synthetic_capture_for_test()
+    }
+
+    /// Native adapter activation for this frame, excluding synthetic test capture.
+    #[cfg(feature = "test-support")]
+    pub fn is_native_a11y_active_for_test(&self) -> bool {
+        self.a11y.is_native_active()
     }
 
     /// Debug representation of the last frame's accessibility information.

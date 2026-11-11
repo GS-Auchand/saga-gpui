@@ -15,6 +15,8 @@ pub(crate) struct FrameDebugInfo {
     pub viewport_size: Size<Pixels>,
     pub scale_factor: f32,
     pub tab_stop_count: usize,
+    pub synthetic_capture_for_test: bool,
+    pub native_activation: bool,
 }
 
 struct CapturedFrame {
@@ -23,6 +25,8 @@ struct CapturedFrame {
     window_title: Option<SharedString>,
     node_count: usize,
     tab_stop_count: usize,
+    synthetic_capture_for_test: bool,
+    native_activation: bool,
     viewport_size: Size<Pixels>,
     scale_factor: f32,
 }
@@ -86,6 +90,8 @@ impl A11yDebug {
             window_title: window_title.cloned(),
             node_count: update.nodes.len(),
             tab_stop_count: frame.tab_stop_count,
+            synthetic_capture_for_test: frame.synthetic_capture_for_test,
+            native_activation: frame.native_activation,
             viewport_size: frame.viewport_size,
             scale_factor: frame.scale_factor,
         });
@@ -138,6 +144,8 @@ impl A11yDebug {
                 "window_title": frame.window_title.as_ref().map(|title| title.to_string()),
                 "node_count": frame.node_count,
                 "tab_stop_count": frame.tab_stop_count,
+                "synthetic_capture_for_test": frame.synthetic_capture_for_test,
+                "native_activation": frame.native_activation,
                 "viewport_size": {
                     "width": frame.viewport_size.width.0,
                     "height": frame.viewport_size.height.0,
