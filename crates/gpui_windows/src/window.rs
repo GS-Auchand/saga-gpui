@@ -1072,6 +1072,11 @@ impl PlatformWindow for WindowsWindow {
     }
 
     #[cfg(feature = "test-support")]
+    fn device_frame_latency_for_test(&self) -> Option<DeviceFrameLatencyEvidence> {
+        self.state.renderer.borrow().device_frame_latency_for_test()
+    }
+
+    #[cfg(feature = "test-support")]
     fn presentation_clock_for_test(&self) -> Option<PlatformPresentationClock> {
         crate::directx_renderer::presentation_clock_for_test()
     }

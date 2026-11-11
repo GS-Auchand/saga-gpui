@@ -69,6 +69,8 @@ pub(crate) struct DirectXRendererDevices {
     pub(crate) device_context: ID3D11DeviceContext,
     dxgi_device: Option<IDXGIDevice>,
     annotation: Option<ID3DUserDefinedAnnotation>,
+    #[cfg(feature = "test-support")]
+    frame_latency_evidence: DeviceFrameLatencyEvidence,
 }
 
 struct DirectXResources {
@@ -135,6 +137,8 @@ impl DirectXRendererDevices {
             dxgi_factory,
             device,
             device_context,
+            #[cfg(feature = "test-support")]
+            frame_latency_evidence,
         } = directx_devices;
         let dxgi_device = if disable_direct_composition {
             None
@@ -150,6 +154,8 @@ impl DirectXRendererDevices {
             device_context: device_context.clone(),
             dxgi_device,
             annotation,
+            #[cfg(feature = "test-support")]
+            frame_latency_evidence: frame_latency_evidence.clone(),
         })
     }
 }
@@ -203,6 +209,11 @@ impl DirectXRenderer {
             #[cfg(feature = "test-support")]
             swap_chain_generation: 1,
         })
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn device_frame_latency_for_test(&self) -> Option<DeviceFrameLatencyEvidence> {
+        self.devices.as_ref().map(|devices| devices.frame_latency_evidence.clone())
     }
 
     pub(crate) fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

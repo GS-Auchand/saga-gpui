@@ -4005,6 +4005,13 @@ impl Window {
         self.platform_window.drain_presentation_capture_for_test()
     }
 
+    /// Snapshot of device-creation/recovery queue-limit request and readback.
+    /// Values describe that initialization, not current measured queue occupancy.
+    #[cfg(feature = "test-support")]
+    pub fn device_frame_latency_for_test(&self) -> Option<crate::DeviceFrameLatencyEvidence> {
+        self.platform_window.device_frame_latency_for_test()
+    }
+
     /// Sample QPC and its frequency without presenting or drawing.
     #[cfg(feature = "test-support")]
     pub fn presentation_clock_for_test(&self) -> Option<crate::PlatformPresentationClock> {

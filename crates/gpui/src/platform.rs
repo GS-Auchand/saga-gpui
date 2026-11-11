@@ -1376,6 +1376,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn drain_presentation_capture_for_test(&self) -> crate::PlatformPresentSnapshot {
         Default::default()
     }
+    /// Device-creation queue experiment evidence, where supported.
+    #[cfg(feature = "test-support")]
+    fn device_frame_latency_for_test(&self) -> Option<crate::DeviceFrameLatencyEvidence> { None }
+
     /// Sample the native presentation clock, where supported.
     #[cfg(feature = "test-support")]
     fn presentation_clock_for_test(&self) -> Option<crate::PlatformPresentationClock> {

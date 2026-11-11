@@ -167,3 +167,31 @@ pub(crate) struct ActiveTextCoverage {
 }
 pub(crate) const MAX_COVERAGE_ROWS: usize = 256;
 pub(crate) const MAX_COVERAGE_GLYPHS: usize = 16_384;
+
+/// Device-creation/recovery evidence for an explicitly requested queue experiment.
+/// This is not a queue-depth measurement or a live getter-time query.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct DeviceFrameLatencyEvidence {
+    /// Process-local monotonically increasing device creation identity.
+    pub device_generation: u64,
+    /// D3D device COM identity, useful only with process/generation identity.
+    pub device_address: u64,
+    /// Only explicit experimental value 1 is accepted; absent/invalid stays None.
+    pub requested: Option<u32>,
+    /// default, requested, or invalid. Invalid requests never mutate the setting.
+    pub request_status: String,
+    /// Initial IDXGIDevice1 maximum-frame-latency query, if successful.
+    pub before: Option<u32>,
+    /// Readback after the optional setter, if successful.
+    pub after: Option<u32>,
+    /// QueryInterface status (zero for success).
+    pub query_interface_hresult: Option<i32>,
+    /// Before-query status (zero for success).
+    pub before_hresult: Option<i32>,
+    /// Setter status; None means no SetMaximumFrameLatency call occurred.
+    pub set_hresult: Option<i32>,
+    /// After-query status (zero for success).
+    pub after_hresult: Option<i32>,
+    /// Explicit final outcome; only applied verifies requested==readback.
+    pub result: String,
+}

@@ -41,6 +41,8 @@ pub(crate) struct DirectXDevices {
     pub(crate) dxgi_factory: IDXGIFactory6,
     pub(crate) device: ID3D11Device,
     pub(crate) device_context: ID3D11DeviceContext,
+    #[cfg(feature = "test-support")]
+    pub(crate) frame_latency_evidence: gpui::DeviceFrameLatencyEvidence,
 }
 
 impl DirectXDevices {
@@ -63,7 +65,11 @@ impl DirectXDevices {
             _ => unreachable!(),
         }
 
+        #[cfg(feature = "test-support")]
+        let frame_latency_evidence = configure_frame_latency_experiment(&device);
         Ok(Self {
+            #[cfg(feature = "test-support")]
+            frame_latency_evidence,
             adapter,
             dxgi_factory,
             device,
@@ -191,4 +197,86 @@ fn get_device(
             "Required feature StructuredBuffer is not supported by GPU/driver"
         ))
     }
+}
+
+// This opt-in is deliberately unavailable in builds without test-support.
+// Device creation is also the recovery path, so the request/readback is reapplied
+// to a replacement device without changing resize or per-frame presentation.
+#[cfg(feature = "test-support")]
+fn configure_frame_latency_experiment(device: &ID3D11Device) -> gpui::DeviceFrameLatencyEvidence {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use windows::Win32::Graphics::Dxgi::IDXGIDevice1;
+    static DEVICE_GENERATION: AtomicU64 = AtomicU64::new(0);
+    let (requested, request_status) = match std::env::var("GPUI_TEST_MAXIMUM_FRAME_LATENCY") {
+        Err(std::env::VarError::NotPresent) => (None, "default"),
+        Ok(value) if value == "1" => (Some(1), "requested"),
+        _ => (None, "invalid"),
+    };
+    let mut evidence = gpui::DeviceFrameLatencyEvidence {
+        device_generation: DEVICE_GENERATION.fetch_add(1, Ordering::Relaxed) + 1,
+        device_address: device.as_raw() as usize as u64,
+        requested,
+        request_status: request_status.into(),
+        result: "unavailable".into(),
+        ..Default::default()
+    };
+    let dxgi_device = match device.cast::<IDXGIDevice1>() {
+        Ok(device) => {
+            evidence.query_interface_hresult = Some(0);
+            device
+        }
+        Err(error) => {
+            evidence.query_interface_hresult = Some(error.code().0);
+            return evidence;
+        }
+    };
+    match unsafe { dxgi_device.GetMaximumFrameLatency() } {
+        Ok(value) => {
+            evidence.before = Some(value);
+            evidence.before_hresult = Some(0);
+        }
+        Err(error) => {
+            evidence.before_hresult = Some(error.code().0);
+            evidence.result = "baseline-query-failed".into();
+            return evidence; // Never change a setting whose baseline we could not read.
+        }
+    }
+    if let Some(value) = requested {
+        match unsafe { dxgi_device.SetMaximumFrameLatency(value) } {
+            Ok(()) => {
+                evidence.set_hresult = Some(0);
+            }
+            Err(error) => {
+                evidence.set_hresult = Some(error.code().0);
+            }
+        }
+    }
+    match unsafe { dxgi_device.GetMaximumFrameLatency() } {
+        Ok(value) => {
+            evidence.after = Some(value);
+            evidence.after_hresult = Some(0);
+        }
+        Err(error) => {
+            evidence.after_hresult = Some(error.code().0);
+        }
+    }
+    evidence.result = if request_status == "invalid" {
+        "invalid-request-not-applied"
+    } else if evidence.set_hresult.is_some_and(|code| code != 0) {
+        "set-failed"
+    } else if evidence.after.is_none() {
+        "readback-failed"
+    } else if let Some(value) = requested {
+        if evidence.after == Some(value) {
+            "applied"
+        } else {
+            "readback-mismatch"
+        }
+    } else if evidence.after == evidence.before {
+        "default-unchanged"
+    } else {
+        "default-readback-changed"
+    }
+    .into();
+    evidence
 }
