@@ -42,6 +42,9 @@ pub struct Scene {
     /// Diagnostic identity assigned when a Window commits this scene.
     #[cfg(feature = "test-support")]
     pub presentation_identity: Option<crate::PresentationScene>,
+    /// Optional committed diagnostic coverage, shared with Present records.
+    #[cfg(feature = "test-support")]
+    pub text_coverage: Option<std::sync::Arc<crate::TextCoverageSnapshot>>,
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
@@ -61,6 +64,7 @@ impl Scene {
         #[cfg(feature = "test-support")]
         {
             self.presentation_identity = None;
+            self.text_coverage = None;
         }
         self.paint_operations.clear();
         self.primitive_bounds.clear();

@@ -42,3 +42,9 @@ pub(crate) use wrapper::*;
 pub use platform::WindowsPlatform;
 
 pub(crate) use windows::Win32::Foundation::HWND;
+
+/// Thread-safe diagnostic QPC sample; does not construct a platform or window.
+#[cfg(feature = "test-support")]
+pub fn presentation_clock_for_test() -> Option<gpui::PlatformPresentationClock> {
+    directx_renderer::presentation_clock_for_test()
+}

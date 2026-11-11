@@ -229,3 +229,16 @@ mod tests {
         assert!(*task_ran.borrow());
     }
 }
+
+/// Thread-safe native presentation clock. Unsupported backends return None.
+#[cfg(feature = "test-support")]
+pub fn presentation_clock_for_test() -> Option<gpui::PlatformPresentationClock> {
+    #[cfg(target_os = "windows")]
+    {
+        gpui_windows::presentation_clock_for_test()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}

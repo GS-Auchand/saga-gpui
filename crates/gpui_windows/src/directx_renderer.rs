@@ -250,10 +250,7 @@ impl DirectXRenderer {
     }
 
     #[inline]
-    fn present(
-        &mut self,
-        #[cfg(feature = "test-support")] identity: Option<PresentationScene>,
-    ) -> Result<()> {
+    fn present(&mut self, #[cfg(feature = "test-support")] scene: &Scene) -> Result<()> {
         let swap_chain = &self
             .resources
             .as_ref()
@@ -278,8 +275,9 @@ impl DirectXRenderer {
         let end = metadata.as_ref().and_then(|_| presentation_qpc_for_test());
         #[cfg(feature = "test-support")]
         if let Some((frequency, process_id, thread_id, swap_chain, hwnd)) = metadata {
-            let identity = identity.unwrap_or_default();
+            let identity = scene.presentation_identity.unwrap_or_default();
             self.presentation_journal.push(PlatformPresentRecord {
+                text_coverage: scene.text_coverage.clone(),
                 scene_id: identity.scene_id,
                 caller_token: identity.caller_token,
                 swap_chain_generation: self.swap_chain_generation,
@@ -388,7 +386,7 @@ impl DirectXRenderer {
         self.render(scene, background_appearance)?;
         self.present(
             #[cfg(feature = "test-support")]
-            scene.presentation_identity,
+            scene,
         )
     }
 
@@ -2124,7 +2122,7 @@ fn presentation_frequency_for_test() -> Option<u64> {
 }
 
 #[cfg(feature = "test-support")]
-pub(crate) fn presentation_clock_for_test() -> Option<PlatformPresentationClock> {
+pub fn presentation_clock_for_test() -> Option<PlatformPresentationClock> {
     let frequency = presentation_frequency_for_test()?;
     Some(PlatformPresentationClock {
         qpc: presentation_qpc_for_test()?,

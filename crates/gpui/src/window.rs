@@ -1046,6 +1046,10 @@ pub(crate) struct Frame {
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
+    #[cfg(feature = "test-support")]
+    text_coverage: crate::TextCoverageSnapshot,
+    #[cfg(feature = "test-support")]
+    coverage_glyphs: usize,
     pub(crate) hitboxes: Vec<Hitbox>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
@@ -1076,6 +1080,10 @@ pub(crate) struct PrepaintStateIndex {
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     scene_index: usize,
+    #[cfg(feature = "test-support")]
+    coverage_index: usize,
+    #[cfg(feature = "test-support")]
+    coverage_overflow: u64,
     #[cfg(any(test, feature = "test-support"))]
     debug_bounds_index: usize,
     mouse_listeners_index: usize,
@@ -1102,6 +1110,10 @@ impl Frame {
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
+            #[cfg(feature = "test-support")]
+            text_coverage: crate::TextCoverageSnapshot::default(),
+            #[cfg(feature = "test-support")]
+            coverage_glyphs: 0,
             hitboxes: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
@@ -1129,6 +1141,11 @@ impl Frame {
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
+        #[cfg(feature = "test-support")]
+        {
+            self.text_coverage = crate::TextCoverageSnapshot::default();
+            self.coverage_glyphs = 0;
+        }
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
@@ -1281,6 +1298,8 @@ pub struct Window {
     presentation_scene_sequence: u64,
     #[cfg(feature = "test-support")]
     presentation_caller_token: Option<u64>,
+    #[cfg(feature = "test-support")]
+    active_text_coverage: Vec<crate::presentation_capture::ActiveTextCoverage>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -2407,6 +2426,8 @@ impl Window {
             presentation_scene_sequence: 0,
             #[cfg(feature = "test-support")]
             presentation_caller_token: None,
+            #[cfg(feature = "test-support")]
+            active_text_coverage: Vec::new(),
             input_rate_tracker,
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
@@ -3757,6 +3778,12 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         #[cfg(feature = "test-support")]
         {
+            if !self.next_frame.text_coverage.rows.is_empty()
+                || self.next_frame.text_coverage.overflow != 0
+            {
+                self.next_frame.scene.text_coverage =
+                    Some(Arc::new(self.next_frame.text_coverage.clone()));
+            }
             self.presentation_scene_sequence += 1;
             self.next_frame.scene.presentation_identity = Some(crate::PresentationScene {
                 scene_id: self.presentation_scene_sequence,
@@ -3851,6 +3878,113 @@ impl Window {
         self.invalidator.replace_views(views);
     }
 
+    /// Scope diagnostics to the exact shaped text being painted. Normal painting
+    /// and cached replay remain unchanged; no repaint is forced by collection.
+    #[cfg(feature = "test-support")]
+    pub fn with_text_coverage_for_test<R>(
+        &mut self,
+        tag: crate::TextCoverageTag,
+        expected_glyphs: usize,
+        paint: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.active_text_coverage
+            .push(crate::presentation_capture::ActiveTextCoverage {
+                row: crate::TextCoverageRow {
+                    tag,
+                    expected_glyphs,
+                    accounted_glyphs: 0,
+                    fully_visible: false,
+                    glyphs: Vec::new(),
+                },
+                glyph_range: None,
+                overflow: 0,
+            });
+        let result = paint(self);
+        if let Some(mut active) = self.active_text_coverage.pop() {
+            active.row.fully_visible = active.row.tag.complete
+                && active.overflow == 0
+                && active.row.accounted_glyphs == active.row.expected_glyphs
+                && active.row.glyphs.iter().any(|glyph| glyph.has_ink)
+                && active.row.glyphs.iter().all(|glyph| glyph.fully_visible);
+            self.next_frame.text_coverage.overflow += active.overflow;
+            self.record_text_coverage_row_for_test(Arc::new(active.row));
+        }
+        result
+    }
+
+    #[cfg(feature = "test-support")]
+    fn record_text_coverage_row_for_test(&mut self, row: Arc<crate::TextCoverageRow>) {
+        use crate::presentation_capture::{MAX_COVERAGE_GLYPHS, MAX_COVERAGE_ROWS};
+        if self.next_frame.text_coverage.rows.len() >= MAX_COVERAGE_ROWS
+            || self.next_frame.coverage_glyphs + row.glyphs.len() > MAX_COVERAGE_GLYPHS
+        {
+            self.next_frame.text_coverage.overflow += 1;
+        } else {
+            self.next_frame.coverage_glyphs += row.glyphs.len();
+            self.next_frame.text_coverage.rows.push(row);
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn text_coverage_active_for_test(&self) -> bool {
+        !self.active_text_coverage.is_empty()
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn set_glyph_coverage_range_for_test(&mut self, range: Range<usize>) {
+        if let Some(active) = self.active_text_coverage.last_mut() {
+            active.glyph_range = Some(range);
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    fn record_glyph_coverage_for_test(
+        &mut self,
+        bounds: Option<Bounds<ScaledPixels>>,
+        mask: Bounds<ScaledPixels>,
+        opacity: f32,
+    ) {
+        let Some(active) = self.active_text_coverage.last_mut() else {
+            return;
+        };
+        let Some(range) = active.glyph_range.take() else {
+            return;
+        };
+        active.row.accounted_glyphs += 1;
+        if active.row.glyphs.len() >= crate::presentation_capture::MAX_COVERAGE_GLYPHS {
+            active.overflow += 1;
+            return;
+        }
+        let rect = |bounds: Bounds<ScaledPixels>| {
+            [
+                bounds.origin.x.0,
+                bounds.origin.y.0,
+                bounds.size.width.0,
+                bounds.size.height.0,
+            ]
+        };
+        let (raster_bounds, clipped_bounds, has_ink, fully_visible) = if let Some(bounds) = bounds {
+            let clipped = bounds.intersect(&mask);
+            (
+                rect(bounds),
+                rect(clipped),
+                true,
+                opacity > 0. && clipped == bounds,
+            )
+        } else {
+            ([0.; 4], [0.; 4], false, true)
+        };
+        active.row.glyphs.push(crate::TextGlyphCoverage {
+            byte_start: range.start,
+            byte_end: range.end,
+            raster_bounds,
+            clipped_bounds,
+            has_ink,
+            effective_opacity: opacity,
+            fully_visible,
+        });
+    }
+
     /// Set the model revision to attach to the next committed draw. Calling this
     /// after a draw never changes the identity of the already committed scene.
     #[cfg(feature = "test-support")]
@@ -3875,6 +4009,14 @@ impl Window {
     #[cfg(feature = "test-support")]
     pub fn presentation_clock_for_test(&self) -> Option<crate::PlatformPresentationClock> {
         self.platform_window.presentation_clock_for_test()
+    }
+
+    /// Coverage of the latest committed draw, including cached paint replay.
+    #[cfg(feature = "test-support")]
+    pub fn last_presentation_text_coverage_for_test(
+        &self,
+    ) -> Option<Arc<crate::TextCoverageSnapshot>> {
+        self.rendered_frame.scene.text_coverage.clone()
     }
 
     /// Identity of the latest committed scene, whether presented or superseded.
@@ -4352,6 +4494,10 @@ impl Window {
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
+            #[cfg(feature = "test-support")]
+            coverage_index: self.next_frame.text_coverage.rows.len(),
+            #[cfg(feature = "test-support")]
+            coverage_overflow: self.next_frame.text_coverage.overflow,
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index: self.next_frame.debug_bounds_records.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
@@ -4364,6 +4510,17 @@ impl Window {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        #[cfg(feature = "test-support")]
+        {
+            let rows = self.rendered_frame.text_coverage.rows
+                [range.start.coverage_index..range.end.coverage_index]
+                .to_vec();
+            self.next_frame.text_coverage.overflow +=
+                range.end.coverage_overflow - range.start.coverage_overflow;
+            for row in rows {
+                self.record_text_coverage_row_for_test(row);
+            }
+        }
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
@@ -5163,6 +5320,14 @@ impl Window {
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
+        #[cfg(feature = "test-support")]
+        if raster_bounds.is_zero() {
+            self.record_glyph_coverage_for_test(
+                None,
+                self.snapped_content_mask().bounds,
+                self.element_opacity() * color.a,
+            );
+        }
         if !raster_bounds.is_zero() {
             let tile = self
                 .sprite_atlas
@@ -5176,6 +5341,12 @@ impl Window {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.snapped_content_mask();
+            #[cfg(feature = "test-support")]
+            self.record_glyph_coverage_for_test(
+                Some(bounds),
+                content_mask.bounds,
+                self.element_opacity() * color.a,
+            );
 
             if subpixel_rendering {
                 self.next_frame.scene.insert_primitive(SubpixelSprite {
@@ -5255,6 +5426,14 @@ impl Window {
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
+        #[cfg(feature = "test-support")]
+        if raster_bounds.is_zero() {
+            self.record_glyph_coverage_for_test(
+                None,
+                self.snapped_content_mask().bounds,
+                self.element_opacity(),
+            );
+        }
         if !raster_bounds.is_zero() {
             let tile = self
                 .sprite_atlas
@@ -5269,6 +5448,12 @@ impl Window {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.snapped_content_mask();
+            #[cfg(feature = "test-support")]
+            self.record_glyph_coverage_for_test(
+                Some(bounds),
+                content_mask.bounds,
+                self.element_opacity(),
+            );
             let opacity = self.element_opacity();
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {

@@ -46,6 +46,8 @@ pub struct PlatformPresentRecord {
     pub hwnd: u64,
     /// Raw HRESULT, including failures and non-error status codes.
     pub hresult: i32,
+    /// Optional cache-replayed coverage from this exact committed scene.
+    pub text_coverage: Option<std::sync::Arc<TextCoverageSnapshot>>,
 }
 
 /// Draining preserves attempt sequence and reports every capacity loss.
@@ -104,3 +106,64 @@ impl PresentationJournal {
         }
     }
 }
+
+/// Caller identity for one shaped paragraph, with no retained model inference.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct TextCoverageTag {
+    /// Caller-defined view identity.
+    pub owner_id: u64,
+    /// Stable caller-defined line identity.
+    pub item_id: u64,
+    /// Full UTF-8 length of this painted revision.
+    pub utf8_len: usize,
+    /// Whether this painted revision is a complete logical line.
+    pub complete: bool,
+}
+/// Bounds are device pixels, [x, y, width, height], after rasterization/snapping.
+#[derive(Clone, Debug, Serialize)]
+pub struct TextGlyphCoverage {
+    /// Shaper cluster start (UTF-8 byte offset).
+    pub byte_start: usize,
+    /// Next distinct shaper cluster or end of text.
+    pub byte_end: usize,
+    /// Actual sprite raster bounds; zero for a glyph with no raster ink.
+    pub raster_bounds: [f32; 4],
+    /// Raster bounds intersected with the effective content mask.
+    pub clipped_bounds: [f32; 4],
+    /// Whether the raster has positive extent (not proof every pixel is opaque).
+    pub has_ink: bool,
+    /// Effective text/element opacity. Positive clip alone does not imply visibility.
+    pub effective_opacity: f32,
+    /// Complete raster extent fits clip and opacity is positive, or no ink exists.
+    pub fully_visible: bool,
+}
+/// Conservative coverage for one actual painted shaped paragraph.
+#[derive(Clone, Debug, Serialize)]
+pub struct TextCoverageRow {
+    /// Source identity supplied by the element actually being painted.
+    pub tag: TextCoverageTag,
+    /// Number of shaped glyphs expected, including culled and empty-ink glyphs.
+    pub expected_glyphs: usize,
+    /// Number observed at raster paint; fewer means no full-visible claim.
+    pub accounted_glyphs: usize,
+    /// Complete, no missing glyphs, all raster bounds fit, at least one ink glyph.
+    pub fully_visible: bool,
+    /// Bounded actual glyph observations, not guessed character-cell rectangles.
+    pub glyphs: Vec<TextGlyphCoverage>,
+}
+/// Immutable frame coverage shared by repeated presentations of one scene.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct TextCoverageSnapshot {
+    /// Includes painted overdraw with clipped/hidden observations; filter explicitly.
+    pub rows: Vec<std::sync::Arc<TextCoverageRow>>,
+    /// Dropped rows or glyphs. Nonzero invalidates completeness claims.
+    pub overflow: u64,
+}
+
+pub(crate) struct ActiveTextCoverage {
+    pub row: TextCoverageRow,
+    pub glyph_range: Option<std::ops::Range<usize>>,
+    pub overflow: u64,
+}
+pub(crate) const MAX_COVERAGE_ROWS: usize = 256;
+pub(crate) const MAX_COVERAGE_GLYPHS: usize = 16_384;

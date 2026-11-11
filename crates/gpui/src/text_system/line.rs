@@ -553,6 +553,20 @@ fn paint_line(
         align_width,
         wrap_boundaries,
     );
+    #[cfg(feature = "test-support")]
+    let coverage_boundaries = if window.text_coverage_active_for_test() {
+        let mut indices: Vec<usize> = layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
+            .collect();
+        indices.push(layout.len);
+        indices.sort_unstable();
+        indices.dedup();
+        Some(indices)
+    } else {
+        None
+    };
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
@@ -739,6 +753,13 @@ fn paint_line(
 
                 let content_mask = window.content_mask();
                 if max_glyph_bounds.intersects(&content_mask.bounds) {
+                    #[cfg(feature = "test-support")]
+                    if let Some(indices) = &coverage_boundaries {
+                        let next = indices.partition_point(|index| *index <= glyph.index);
+                        window.set_glyph_coverage_range_for_test(
+                            glyph.index..indices.get(next).copied().unwrap_or(layout.len),
+                        );
+                    }
                     let vertical_offset = point(px(0.0), glyph.position.y);
                     if glyph.is_emoji {
                         window.paint_emoji(
