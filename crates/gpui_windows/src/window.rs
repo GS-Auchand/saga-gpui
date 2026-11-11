@@ -720,6 +720,16 @@ impl PlatformWindow for WindowsWindow {
         self.state.input_handler.take()
     }
 
+    fn prompt_credentials(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Option<gpui::NativeCredentials>>> {
+        crate::dialog::show_dialog(
+            Some(self.0.dialog_owner.clone()),
+            &self.0.executor,
+            crate::credential_dialog::prompt,
+        )
+    }
+
     fn prompt(
         &self,
         level: PromptLevel,

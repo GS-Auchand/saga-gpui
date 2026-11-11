@@ -60,6 +60,7 @@ hot-reload = [
 path = "src/gpui.rs"
 
 [dependencies]
+zeroize.workspace = true
 accesskit.workspace = true
 anyhow.workspace = true
 async-task.workspace = true

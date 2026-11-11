@@ -1,3 +1,6 @@
+mod credentials;
+pub use credentials::NativeCredentials;
+
 mod app_menu;
 mod keyboard;
 mod keystroke;
@@ -1310,6 +1313,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// element on web). Called only when the configuration changes, because
     /// reconfiguring a live input session can restart the IME connection.
     fn set_text_input_configuration(&mut self, _configuration: TextInputConfiguration) {}
+    /// Explicitly request native credential entry. Unsupported platforms fail closed.
+    /// Dropping the receiver requests cancellation; no custom-input fallback is used.
+    fn prompt_credentials(&self) -> oneshot::Receiver<Result<Option<NativeCredentials>>> {
+        let (sender, receiver) = oneshot::channel();
+        let _ = sender.send(Err(anyhow::anyhow!("native credential entry is unsupported")));
+        receiver
+    }
     fn prompt(
         &self,
         level: PromptLevel,

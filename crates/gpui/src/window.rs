@@ -6955,6 +6955,16 @@ impl Window {
         });
     }
 
+    /// Request a native credential dialog only from an explicit user action.
+    /// Returns None on user cancellation; unsupported backends return an error.
+    /// Credentials are never passed through the custom prompt builder.
+    /// Drop the receiver to request cancellation. Do not detach a waiting task.
+    pub fn prompt_credentials(
+        &mut self,
+    ) -> oneshot::Receiver<Result<Option<crate::NativeCredentials>>> {
+        self.platform_window.prompt_credentials()
+    }
+
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
