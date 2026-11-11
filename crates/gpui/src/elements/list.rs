@@ -18,6 +18,9 @@ use refineable::Refineable as _;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, Dimensions, SumTree};
 
+mod positioned;
+pub use positioned::*;
+
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 
 /// Construct a new list element
@@ -235,6 +238,7 @@ enum ListItem {
     },
     Measured {
         size: Size<Pixels>,
+        baseline_size: Option<Size<Pixels>>,
         focus_handle: Option<FocusHandle>,
     },
 }
@@ -244,6 +248,7 @@ impl ListItem {
         if ready {
             Self::Measured {
                 size,
+                baseline_size: None,
                 focus_handle: self.focus_handle(),
             }
         } else {
@@ -259,6 +264,16 @@ impl ListItem {
             Some(*size)
         } else {
             None
+        }
+    }
+
+    fn baseline_hint(&self) -> Option<Size<Pixels>> {
+        match self {
+            Self::Measured {
+                baseline_size: Some(size),
+                ..
+            } => Some(*size),
+            _ => self.size_hint(),
         }
     }
 
@@ -296,6 +311,7 @@ struct ListItemSummary {
     height: Pixels,
     has_focus_handles: bool,
     has_unknown_height: bool,
+    has_positioned: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -449,7 +465,7 @@ impl ListState {
             let invalidated = cursor.slice(&Count(range.end), Bias::Right);
             new_items.extend(
                 invalidated.iter().map(|item| ListItem::Unmeasured {
-                    size_hint: item.size_hint(),
+                    size_hint: item.baseline_hint(),
                     focus_handle: item.focus_handle(),
                 }),
                 (),
@@ -1551,6 +1567,9 @@ impl Element for List {
     ) -> ListPrepaintState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
+        if state.items.summary().has_positioned {
+            state.items = positioned::baseline_tree(&state.items);
+        }
 
         let mut style = Style::default();
         style.refine(&self.style);
@@ -1683,9 +1702,12 @@ impl sum_tree::Item for ListItem {
                 },
                 has_focus_handles: focus_handle.is_some(),
                 has_unknown_height: size_hint.is_none(),
+                has_positioned: false,
             },
             ListItem::Measured {
-                size, focus_handle, ..
+                size,
+                focus_handle,
+                baseline_size,
             } => ListItemSummary {
                 count: 1,
                 rendered_count: 1,
@@ -1693,6 +1715,7 @@ impl sum_tree::Item for ListItem {
                 height: size.height,
                 has_focus_handles: focus_handle.is_some(),
                 has_unknown_height: false,
+                has_positioned: baseline_size.is_some(),
             },
         }
     }
@@ -1710,6 +1733,7 @@ impl sum_tree::ContextLessSummary for ListItemSummary {
         self.height += summary.height;
         self.has_focus_handles |= summary.has_focus_handles;
         self.has_unknown_height |= summary.has_unknown_height;
+        self.has_positioned |= summary.has_positioned;
     }
 }
 
