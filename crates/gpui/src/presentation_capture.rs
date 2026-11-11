@@ -22,6 +22,8 @@ pub struct PlatformPresentationClock {
 /// One backend Present API invocation. Clock failure remains explicit.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct PlatformPresentRecord {
+    /// Synchronous paint callback scope, not a claim about unique WM_PAINT origin.
+    pub frame_signal: Option<crate::FramePaintToken>,
     /// Committed scene identity, or zero if no Window committed it.
     pub scene_id: u64,
     /// Caller revision from that scene, never sampled at Present time.

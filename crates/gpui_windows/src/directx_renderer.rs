@@ -213,7 +213,9 @@ impl DirectXRenderer {
 
     #[cfg(feature = "test-support")]
     pub(crate) fn device_frame_latency_for_test(&self) -> Option<DeviceFrameLatencyEvidence> {
-        self.devices.as_ref().map(|devices| devices.frame_latency_evidence.clone())
+        self.devices
+            .as_ref()
+            .map(|devices| devices.frame_latency_evidence.clone())
     }
 
     pub(crate) fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -288,6 +290,7 @@ impl DirectXRenderer {
         if let Some((frequency, process_id, thread_id, swap_chain, hwnd)) = metadata {
             let identity = scene.presentation_identity.unwrap_or_default();
             self.presentation_journal.push(PlatformPresentRecord {
+                frame_signal: gpui::FramePaintScope::current(hwnd),
                 text_coverage: scene.text_coverage.clone(),
                 scene_id: identity.scene_id,
                 caller_token: identity.caller_token,

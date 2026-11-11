@@ -4004,6 +4004,11 @@ impl Window {
     pub fn drain_presentation_capture_for_test(&self) -> crate::PlatformPresentSnapshot {
         self.platform_window.drain_presentation_capture_for_test()
     }
+    /// Drain opt-in frame scheduling provenance, independent of Present records.
+    #[cfg(feature = "test-support")]
+    pub fn drain_frame_signal_capture_for_test(&self) -> crate::FrameSignalSnapshot {
+        self.platform_window.drain_frame_signal_capture_for_test()
+    }
 
     /// Snapshot of device-creation/recovery queue-limit request and readback.
     /// Values describe that initialization, not current measured queue occupancy.

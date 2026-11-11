@@ -35,6 +35,8 @@ mod color;
 mod element;
 mod elements;
 mod executor;
+#[cfg(feature = "test-support")]
+mod frame_signal_capture;
 mod geometry;
 mod gestures;
 mod global;
@@ -48,6 +50,8 @@ mod platform;
 mod platform_scheduler;
 #[cfg(feature = "test-support")]
 mod presentation_capture;
+#[cfg(feature = "test-support")]
+pub use frame_signal_capture::*;
 #[cfg(feature = "test-support")]
 pub use presentation_capture::*;
 mod scene;

@@ -1055,11 +1055,21 @@ impl PlatformWindow for WindowsWindow {
 
     #[cfg(feature = "test-support")]
     fn enable_presentation_capture_for_test(&self, capacity: usize) -> bool {
-        self.state
+        let enabled = self
+            .state
             .renderer
             .borrow_mut()
             .presentation_journal
-            .enable(capacity)
+            .enable(capacity);
+        if enabled {
+            self.state.frame_signal.diagnostics.enable(capacity);
+        }
+        enabled
+    }
+
+    #[cfg(feature = "test-support")]
+    fn drain_frame_signal_capture_for_test(&self) -> FrameSignalSnapshot {
+        self.state.frame_signal.diagnostics.drain()
     }
 
     #[cfg(feature = "test-support")]

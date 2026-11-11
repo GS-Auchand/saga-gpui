@@ -25,7 +25,7 @@ const DEFAULT_VSYNC_INTERVAL: Duration = Duration::from_micros(16_666); // ~60Hz
 
 pub(crate) struct VSyncProvider {
     interval: Duration,
-    f: Box<dyn Fn() -> bool>,
+    f: Box<dyn Fn() -> i32>,
 }
 
 impl VSyncProvider {
@@ -34,13 +34,16 @@ impl VSyncProvider {
             .context("Failed to get DWM interval")
             .log_err()
             .unwrap_or(DEFAULT_VSYNC_INTERVAL);
-        let f = Box::new(|| unsafe { DwmFlush().is_ok() });
+        let f = Box::new(|| match unsafe { DwmFlush() } {
+            Ok(()) => 0,
+            Err(error) => error.code().0,
+        });
         Self { interval, f }
     }
 
     pub(crate) fn wait_for_vsync(&self) -> FrameRequestSource {
         let vsync_start = Instant::now();
-        let wait_succeeded = (self.f)();
+        let wait_succeeded = (self.f)() >= 0;
         let elapsed = vsync_start.elapsed();
         // DwmFlush and DCompositionWaitForCompositorClock returns very early
         // instead of waiting until vblank when the monitor goes to sleep or is
@@ -56,6 +59,29 @@ impl VSyncProvider {
         } else {
             FrameRequestSource::NativeCallback
         }
+    }
+    #[cfg(feature = "test-support")]
+    pub(crate) fn wait_for_vsync_traced(&self) -> (FrameRequestSource, gpui::FrameWaitTrace) {
+        let clock =
+            || crate::directx_renderer::presentation_clock_for_test().map(|sample| sample.qpc);
+        let mut trace = gpui::FrameWaitTrace {
+            native_start_qpc: clock(),
+            ..Default::default()
+        };
+        let vsync_start = Instant::now();
+        trace.native_hresult = (self.f)();
+        let elapsed = vsync_start.elapsed();
+        trace.native_end_qpc = clock();
+        let source = if trace.native_hresult < 0 || elapsed < VSYNC_INTERVAL_THRESHOLD {
+            log::trace!("VSyncProvider::wait_for_vsync() took less time than expected");
+            trace.fallback_start_qpc = clock();
+            std::thread::sleep(self.interval);
+            trace.fallback_end_qpc = clock();
+            FrameRequestSource::LocalSchedule
+        } else {
+            FrameRequestSource::NativeCallback
+        };
+        (source, trace)
     }
 }
 
@@ -94,7 +120,7 @@ mod tests {
             interval: Duration::ZERO,
             f: Box::new(|| {
                 std::thread::sleep(VSYNC_INTERVAL_THRESHOLD * 2);
-                true
+                0
             }),
         };
 
@@ -110,7 +136,7 @@ mod tests {
             interval: Duration::ZERO,
             f: Box::new(|| {
                 std::thread::sleep(VSYNC_INTERVAL_THRESHOLD * 2);
-                false
+                -1
             }),
         };
 

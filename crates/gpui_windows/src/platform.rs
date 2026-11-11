@@ -443,6 +443,21 @@ impl WindowsPlatform {
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
                 loop {
+                    #[cfg(feature = "test-support")]
+                    let trace_enabled = all_windows.upgrade().is_some_and(|windows| {
+                        windows
+                            .read()
+                            .iter()
+                            .any(|window| window.frame_signal.diagnostics.enabled())
+                    });
+                    #[cfg(feature = "test-support")]
+                    let (signal_source, wait_trace) = if trace_enabled {
+                        let (source, trace) = vsync_provider.wait_for_vsync_traced();
+                        (source, Some(trace))
+                    } else {
+                        (vsync_provider.wait_for_vsync(), None)
+                    };
+                    #[cfg(not(feature = "test-support"))]
                     let signal_source = vsync_provider.wait_for_vsync();
                     let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
                     if stop.load(Ordering::Acquire) {
@@ -475,9 +490,49 @@ impl WindowsPlatform {
                                     hwnd.frame_signal.take();
                                 }
                             }
-                            RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
-                                .ok()
-                                .log_err();
+                            #[cfg(feature = "test-support")]
+                            let diagnostic_signal = if hwnd.frame_signal.diagnostics.enabled() {
+                                hwnd.frame_signal.diagnostics.signal(
+                                    IsWindowVisible(hwnd.as_raw()).as_bool()
+                                        && !IsIconic(hwnd.as_raw()).as_bool(),
+                                    wait_trace.clone(),
+                                    crate::directx_renderer::presentation_clock_for_test()
+                                        .map(|sample| sample.qpc),
+                                )
+                            } else {
+                                None
+                            };
+                            #[cfg(feature = "test-support")]
+                            if let Some(signal_id) = diagnostic_signal {
+                                hwnd.frame_signal
+                                    .diagnostics
+                                    .record(gpui::FrameSignalRecord {
+                                        kind: "redraw-request".into(),
+                                        signal_id: Some(signal_id),
+                                        qpc: crate::directx_renderer::presentation_clock_for_test()
+                                            .map(|sample| sample.qpc),
+                                        ..Default::default()
+                                    });
+                            }
+                            let redraw_result =
+                                RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE).ok();
+                            #[cfg(feature = "test-support")]
+                            if let Some(signal_id) = diagnostic_signal {
+                                hwnd.frame_signal
+                                    .diagnostics
+                                    .record(gpui::FrameSignalRecord {
+                                        kind: "redraw".into(),
+                                        signal_id: Some(signal_id),
+                                        qpc: crate::directx_renderer::presentation_clock_for_test()
+                                            .map(|sample| sample.qpc),
+                                        result: Some(match &redraw_result {
+                                            Ok(()) => 0,
+                                            Err(error) => error.code().0,
+                                        }),
+                                        ..Default::default()
+                                    });
+                            }
+                            redraw_result.log_err();
                         }
                     }
                 }

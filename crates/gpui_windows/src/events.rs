@@ -1351,8 +1351,34 @@ impl WindowsWindowInner {
 
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
+        #[cfg(feature = "test-support")]
+        let diagnostic_clock =
+            || crate::directx_renderer::presentation_clock_for_test().map(|sample| sample.qpc);
+        #[cfg(feature = "test-support")]
+        let paint = if self.state.frame_signal.diagnostics.enabled() {
+            self.state
+                .frame_signal
+                .diagnostics
+                .begin_paint(handle.0 as usize as u64, diagnostic_clock())
+        } else {
+            None
+        };
+
         let Some(_guard) = self.state.draw_coordinator.try_begin_draw() else {
             log::debug!("deferring re-entrant draw of window {handle:?}");
+            #[cfg(feature = "test-support")]
+            if let Some(paint) = paint {
+                self.state
+                    .frame_signal
+                    .diagnostics
+                    .record(gpui::FrameSignalRecord {
+                        kind: "paint-deferred".into(),
+                        paint: Some(paint),
+                        qpc: diagnostic_clock(),
+                        ..Default::default()
+                    });
+            }
+
             if force_render {
                 self.state.force_render_pending.set(true);
             }
@@ -1365,7 +1391,21 @@ impl WindowsWindowInner {
             unsafe { ValidateRect(Some(handle), None).ok().log_err() };
             return Some(0);
         };
-        let mut request_frame = self.state.callbacks.request_frame.take()?;
+        let Some(mut request_frame) = self.state.callbacks.request_frame.take() else {
+            #[cfg(feature = "test-support")]
+            if let Some(paint) = paint {
+                self.state
+                    .frame_signal
+                    .diagnostics
+                    .record(gpui::FrameSignalRecord {
+                        kind: "paint-no-callback".into(),
+                        paint: Some(paint),
+                        qpc: diagnostic_clock(),
+                        ..Default::default()
+                    });
+            }
+            return None;
+        };
 
         self.state.direct_manipulation.update();
 
@@ -1389,6 +1429,15 @@ impl WindowsWindowInner {
             (None, FrameRequestSource::NativeCallback),
             |(at, source)| (Some(at), source),
         );
+        #[cfg(feature = "test-support")]
+        let paint = paint.map(|paint| {
+            self.state
+                .frame_signal
+                .diagnostics
+                .begin_callback(paint, diagnostic_clock())
+        });
+        #[cfg(feature = "test-support")]
+        let paint_scope = gpui::FramePaintScope::enter(paint.clone());
         request_frame(RequestFrameOptions {
             require_presentation: false,
             force_render,
@@ -1396,6 +1445,21 @@ impl WindowsWindowInner {
             signal_source,
         });
 
+        #[cfg(feature = "test-support")]
+        {
+            drop(paint_scope);
+            if let Some(paint) = paint {
+                self.state
+                    .frame_signal
+                    .diagnostics
+                    .record(gpui::FrameSignalRecord {
+                        kind: "callback-end".into(),
+                        paint: Some(paint),
+                        qpc: diagnostic_clock(),
+                        ..Default::default()
+                    });
+            }
+        }
         self.state.callbacks.request_frame.set(Some(request_frame));
         self.update_ime_enabled(handle);
         unsafe { ValidateRect(Some(handle), None).ok().log_err() };

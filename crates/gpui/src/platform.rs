@@ -1116,6 +1116,9 @@ pub struct RequestFrameOptions {
 /// source; the remaining bits encode nanoseconds from `origin`. `u64::MAX` is empty.
 /// Without the `profiler` feature, this accumulator has no timestamp storage.
 pub struct PlatformFrameSignal {
+    #[cfg(feature = "test-support")]
+    /// Independent opt-in provenance; does not alter profiler timestamp coalescing.
+    pub diagnostics: crate::FrameSignalJournal,
     #[cfg(feature = "profiler")]
     origin: Instant,
     #[cfg(feature = "profiler")]
@@ -1132,6 +1135,8 @@ impl PlatformFrameSignal {
     /// Creates an empty signal accumulator.
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "test-support")]
+            diagnostics: Default::default(),
             #[cfg(feature = "profiler")]
             origin: Instant::now(),
             #[cfg(feature = "profiler")]
@@ -1317,7 +1322,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Dropping the receiver requests cancellation; no custom-input fallback is used.
     fn prompt_credentials(&self) -> oneshot::Receiver<Result<Option<NativeCredentials>>> {
         let (sender, receiver) = oneshot::channel();
-        let _ = sender.send(Err(anyhow::anyhow!("native credential entry is unsupported")));
+        let _ = sender.send(Err(anyhow::anyhow!(
+            "native credential entry is unsupported"
+        )));
         receiver
     }
     fn prompt(
@@ -1376,9 +1383,17 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn drain_presentation_capture_for_test(&self) -> crate::PlatformPresentSnapshot {
         Default::default()
     }
+    #[cfg(feature = "test-support")]
+    /// Drain diagnostic scheduling observations; unsupported backends return an empty snapshot.
+    fn drain_frame_signal_capture_for_test(&self) -> crate::FrameSignalSnapshot {
+        Default::default()
+    }
+
     /// Device-creation queue experiment evidence, where supported.
     #[cfg(feature = "test-support")]
-    fn device_frame_latency_for_test(&self) -> Option<crate::DeviceFrameLatencyEvidence> { None }
+    fn device_frame_latency_for_test(&self) -> Option<crate::DeviceFrameLatencyEvidence> {
+        None
+    }
 
     /// Sample the native presentation clock, where supported.
     #[cfg(feature = "test-support")]
