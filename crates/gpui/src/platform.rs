@@ -1,6 +1,3 @@
-mod credentials;
-pub use credentials::NativeCredentials;
-
 mod app_menu;
 mod keyboard;
 mod keystroke;
@@ -1316,13 +1313,6 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         if configuration.purpose == TextInputPurpose::Password {
             log::error!(target: "gpui::secure_input", "password-purpose-unsupported");
         }
-    }
-    /// Explicitly request native credential entry. Unsupported platforms fail closed.
-    /// Dropping the receiver requests cancellation; no custom-input fallback is used.
-    fn prompt_credentials(&self) -> oneshot::Receiver<Result<Option<NativeCredentials>>> {
-        let (sender, receiver) = oneshot::channel();
-        let _ = sender.send(Err(anyhow::anyhow!("native credential entry is unsupported")));
-        receiver
     }
     fn prompt(
         &self,

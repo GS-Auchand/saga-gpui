@@ -7431,7 +7431,6 @@ dependencies = [
  "web-time",
  "windows 0.62.2",
  "zed-scap",
- "zeroize",
 ]
 
 [[package]]
@@ -7717,7 +7716,6 @@ dependencies = [
  "windows-numerics 0.3.1",
  "windows-registry 0.6.1",
  "zed-scap",
- "zeroize",
 ]
 
 [[package]]

@@ -3,7 +3,6 @@
 mod clipboard;
 mod destination_list;
 mod dialog;
-mod credential_dialog;
 mod direct_manipulation;
 mod direct_write;
 mod directx_atlas;
