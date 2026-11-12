@@ -21,6 +21,7 @@ struct Protection {
     manager: ITfThreadMgr,
     document: ITfDocumentMgr,
     previous: Option<ITfDocumentMgr>,
+    previous_focus: Option<ITfDocumentMgr>,
     previous_ime: HIMC,
 }
 
@@ -81,6 +82,15 @@ impl Protection {
                     return Err(error);
                 }
             };
+            let previous_focus = match focused_document(&manager) {
+                Ok(previous) => previous,
+                Err(error) => {
+                    if manager.Deactivate().is_err() {
+                        log::error!(target: "gpui::secure_input", "windows-tsf-deactivate-failed");
+                    }
+                    return Err(error);
+                }
+            };
             let previous = match associate(&manager, hwnd, Some(&document)) {
                 Ok(previous) => previous,
                 Err(error) => {
@@ -108,6 +118,7 @@ impl Protection {
                 manager,
                 document,
                 previous,
+                previous_focus,
                 previous_ime,
             };
             if !ImmAssociateContextEx(hwnd, HIMC::default(), 0).as_bool() {
@@ -124,16 +135,19 @@ impl Protection {
 impl Drop for Protection {
     fn drop(&mut self) {
         unsafe {
+            let owned_focus = match focused_document(&self.manager) {
+                Ok(current) => current.as_ref() == Some(&self.document),
+                Err(_) => {
+                    log::error!(target: "gpui::secure_input", "windows-tsf-focus-query-failed");
+                    false
+                }
+            };
             if associate(&self.manager, self.hwnd, self.previous.as_ref()).is_err() {
                 log::error!(target: "gpui::secure_input", "windows-tsf-restore-failed");
             }
             // Restore only our focus. Another window may already own the thread's TSF focus.
-            if let Ok(current) = self.manager.GetFocus() {
-                if current == self.document
-                    && self.manager.SetFocus(self.previous.as_ref()).is_err()
-                {
-                    log::error!(target: "gpui::secure_input", "windows-tsf-focus-restore-failed");
-                }
+            if owned_focus && self.manager.SetFocus(self.previous_focus.as_ref()).is_err() {
+                log::error!(target: "gpui::secure_input", "windows-tsf-focus-restore-failed");
             }
             ImmAssociateContext(self.hwnd, self.previous_ime);
             let restored = ImmGetContext(self.hwnd);
@@ -147,6 +161,18 @@ impl Drop for Protection {
                 log::error!(target: "gpui::secure_input", "windows-tsf-deactivate-failed");
             }
         }
+    }
+}
+
+unsafe fn focused_document(manager: &ITfThreadMgr) -> Result<Option<ITfDocumentMgr>> {
+    let mut document = std::ptr::null_mut();
+    unsafe {
+        (manager.vtable().GetFocus)(manager.as_raw(), &mut document).ok()?;
+        Ok(if document.is_null() {
+            None
+        } else {
+            Some(ITfDocumentMgr::from_raw(document))
+        })
     }
 }
 
