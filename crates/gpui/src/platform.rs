@@ -1312,7 +1312,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// platform's text input session (e.g. attributes of the hidden editable
     /// element on web). Called only when the configuration changes, because
     /// reconfiguring a live input session can restart the IME connection.
-    fn set_text_input_configuration(&mut self, _configuration: TextInputConfiguration) {}
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        if configuration.purpose == TextInputPurpose::Password {
+            log::error!(target: "gpui::secure_input", "password-purpose-unsupported");
+        }
+    }
     /// Explicitly request native credential entry. Unsupported platforms fail closed.
     /// Dropping the receiver requests cancellation; no custom-input fallback is used.
     fn prompt_credentials(&self) -> oneshot::Receiver<Result<Option<NativeCredentials>>> {
@@ -2581,6 +2585,8 @@ pub trait InputHandler: 'static {
 /// key presentation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TextInputConfiguration {
+    /// Requests native password input protections while this region owns focus.
+    pub purpose: TextInputPurpose,
     /// Whether the platform may automatically correct entered text.
     pub autocorrect: bool,
     /// How software keyboards automatically capitalize entered text.
@@ -2589,6 +2595,16 @@ pub struct TextInputConfiguration {
     pub suggestions: bool,
     /// The action advertised on a software keyboard's confirm ("enter") key.
     pub input_action: TextInputAction,
+}
+
+/// Native input purpose. This does not mask, store, or erase application text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextInputPurpose {
+    /// Ordinary editable text.
+    #[default]
+    Normal,
+    /// Password entry; platform failures are logged without rejecting input.
+    Password,
 }
 
 /// Automatic capitalization applied by software keyboards.

@@ -88,6 +88,14 @@ unsafe fn build_classes() {
                 should_handle_reopen as extern "C-unwind" fn(_, Sel, *mut AnyObject, Bool) -> Bool,
             );
             decl.add_method(
+                sel!(applicationDidBecomeActive:),
+                secure_input_did_activate as extern "C-unwind" fn(_, Sel, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(applicationWillResignActive:),
+                secure_input_will_deactivate as extern "C-unwind" fn(_, Sel, *mut AnyObject),
+            );
+            decl.add_method(
                 sel!(applicationWillTerminate:),
                 will_terminate as extern "C-unwind" fn(_, Sel, *mut AnyObject),
             );
@@ -1393,6 +1401,7 @@ extern "C-unwind" fn should_handle_reopen(
 }
 
 extern "C-unwind" fn will_terminate(this: &AnyObject, _: Sel, _: *mut AnyObject) {
+    crate::secure_input::set_app_active(false);
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
     if let Some(mut callback) = lock.quit.take() {
@@ -1633,4 +1642,12 @@ unsafe extern "C" {
     pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
     pub(super) static kTISPropertyInputSourceType: CFStringRef;
     pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
+}
+
+// The process-wide protection must be released before another app owns typing.
+extern "C-unwind" fn secure_input_did_activate(_: &AnyObject, _: Sel, _: *mut AnyObject) {
+    crate::secure_input::set_app_active(true);
+}
+extern "C-unwind" fn secure_input_will_deactivate(_: &AnyObject, _: Sel, _: *mut AnyObject) {
+    crate::secure_input::set_app_active(false);
 }

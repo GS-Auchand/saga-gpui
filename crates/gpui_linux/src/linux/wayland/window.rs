@@ -38,9 +38,10 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, Corners, Decorations, DevicePixels, ExternalDragPayload,
     FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
-    WindowKind, WindowParams, WindowVisibility,
+    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, TextInputConfiguration,
+    TextInputPurpose, Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowControls, WindowDecorations, WindowKind, WindowParams,
+    WindowVisibility,
     layer_shell::{Anchor, LayerShellNotSupportedError},
     popup::PopupOptions,
     px, size,
@@ -121,6 +122,7 @@ pub struct WaylandWindowState {
     bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
+    text_input_purpose: TextInputPurpose,
     decorations: WindowDecorations,
     background_appearance: WindowBackgroundAppearance,
     fullscreen: bool,
@@ -623,6 +625,7 @@ impl WaylandWindowState {
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
+            text_input_purpose: TextInputPurpose::Normal,
             decorations: WindowDecorations::Client,
             background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
@@ -1067,6 +1070,10 @@ impl WaylandWindowStatePtr {
     fn request_redraw(&self) {
         self.state.borrow_mut().redraw_requested = true;
         self.schedule_frame();
+    }
+
+    pub fn text_input_purpose(&self) -> TextInputPurpose {
+        self.state.borrow().text_input_purpose
     }
 
     fn update_ime_enabled(&self) {
@@ -1844,6 +1851,17 @@ impl PlatformWindow for WaylandWindow {
 
     fn capslock(&self) -> Capslock {
         self.borrow().client.get_client().borrow().capslock
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        let (client, active) = {
+            let mut state = self.borrow_mut();
+            state.text_input_purpose = configuration.purpose;
+            (state.client.clone(), state.active)
+        };
+        if active {
+            client.set_ime_purpose(configuration.purpose);
+        }
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {

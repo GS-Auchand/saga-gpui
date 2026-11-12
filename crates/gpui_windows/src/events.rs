@@ -94,6 +94,13 @@ impl WindowsWindowInner {
             // So, let's eagerly activate the window.
             WM_MOUSEACTIVATE => Some(MA_ACTIVATE as isize),
             WM_ACTIVATE => self.handle_activate_msg(wparam),
+            #[cfg(feature = "test-support")]
+            crate::TEST_WINDOW_ACTIVATION => {
+                self.handle_activate_msg(wparam);
+                // DefWindowProc handles WM_ACTIVATE by setting OS focus. Synthetic
+                // hidden-window tests must exercise GPUI's hook without that side effect.
+                Some(0)
+            }
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
@@ -323,6 +330,8 @@ impl WindowsWindowInner {
     }
 
     fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
+        self.state.input_active.set(false);
+        self.sync_secure_input();
         let callback = { self.state.callbacks.close.take() };
         // Re-enable parent window if this was a modal dialog
         if let Some(parent_hwnd) = self.parent_hwnd {
@@ -692,6 +701,10 @@ impl WindowsWindowInner {
     }
 
     fn update_ime_enabled(&self, handle: HWND) {
+        // Password protection owns the native context until its focus lease ends.
+        if self.state.text_input_purpose.get() == TextInputPurpose::Password {
+            return;
+        }
         let ime_enabled = self
             .with_input_handler(|input_handler| input_handler.query_accepts_text_input())
             .unwrap_or(false);
@@ -797,6 +810,8 @@ impl WindowsWindowInner {
 
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
+        self.state.input_active.set(activated);
+        self.sync_secure_input();
 
         let events = self
             .state

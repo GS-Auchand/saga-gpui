@@ -57,6 +57,9 @@ pub struct WindowsWindowState {
     pub frame_signal: Arc<PlatformFrameSignal>,
     pub input_handler: Cell<Option<PlatformInputHandler>>,
     pub ime_enabled: Cell<bool>,
+    pub text_input_purpose: Cell<TextInputPurpose>,
+    pub input_active: Cell<bool>,
+    pub secure_input: RefCell<crate::secure_input::SecureInput>,
     pub pending_surrogate: Cell<Option<u16>>,
     pub last_reported_modifiers: Cell<Option<Modifiers>>,
     pub last_reported_capslock: Cell<Option<Capslock>>,
@@ -173,6 +176,9 @@ impl WindowsWindowState {
             frame_signal: Arc::new(PlatformFrameSignal::new()),
             input_handler: Cell::new(input_handler),
             ime_enabled: Cell::new(true),
+            text_input_purpose: Cell::new(TextInputPurpose::Normal),
+            input_active: Cell::new(false),
+            secure_input: RefCell::new(crate::secure_input::SecureInput::default()),
             pending_surrogate: Cell::new(pending_surrogate),
             last_reported_modifiers: Cell::new(last_reported_modifiers),
             last_reported_capslock: Cell::new(last_reported_capslock),
@@ -256,6 +262,13 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowInner {
+    pub(crate) fn sync_secure_input(&self) {
+        self.state.secure_input.borrow_mut().update(
+            self.hwnd,
+            self.state.input_active.get()
+                && self.state.text_input_purpose.get() == TextInputPurpose::Password,
+        );
+    }
     /// Whether the window is being presented: shown and not minimized. Windows
     /// has no notification for a window fully covered by other windows, so
     /// that case reports `Visible`.
@@ -612,6 +625,8 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
+        self.state.input_active.set(false);
+        self.sync_secure_input();
         self.0.dialog_owner.close();
         unsafe { ShowWindowAsync(self.0.hwnd, SW_HIDE).ok().log_err() };
         // `DestroyWindow` below sends `WM_SHOWWINDOW`; without a callback the
@@ -714,6 +729,11 @@ impl PlatformWindow for WindowsWindow {
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.state.input_handler.set(Some(input_handler));
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        self.state.text_input_purpose.set(configuration.purpose);
+        self.sync_secure_input();
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {

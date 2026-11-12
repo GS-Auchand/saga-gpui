@@ -14,6 +14,7 @@ mod display;
 mod events;
 mod keyboard;
 mod platform;
+mod secure_input;
 mod system_notifications;
 mod system_settings;
 mod util;
@@ -40,5 +41,9 @@ pub(crate) use window::*;
 pub(crate) use wrapper::*;
 
 pub use platform::WindowsPlatform;
+
+/// Drives GPUI's activation hook without DefWindowProc changing OS focus.
+#[cfg(feature = "test-support")]
+pub const TEST_WINDOW_ACTIVATION: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 0x5a;
 
 pub(crate) use windows::Win32::Foundation::HWND;

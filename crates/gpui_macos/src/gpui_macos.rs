@@ -25,6 +25,7 @@ pub mod metal_renderer {
 
 mod platform;
 mod window;
+mod secure_input;
 mod window_appearance;
 
 use objc2::{

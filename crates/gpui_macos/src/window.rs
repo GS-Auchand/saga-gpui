@@ -13,8 +13,9 @@ use gpui::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowKind, WindowParams, WindowVisibility, point, px, size,
+    SharedString, Size, SystemWindowTab, TextInputConfiguration, TextInputPurpose,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
+    WindowParams, WindowVisibility, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -673,6 +674,8 @@ struct MacWindowState {
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
+    text_input_purpose: TextInputPurpose,
+    secure_input: crate::secure_input::Lease,
     last_key_equivalent: Option<KeyDownEvent>,
     last_left_mouse_down_event: Option<Retained<AnyObject>>,
     synthetic_drag_counter: usize,
@@ -707,6 +710,12 @@ struct MacWindowState {
 }
 
 impl MacWindowState {
+    fn update_secure_input(&mut self) {
+        let requested = self.text_input_purpose == TextInputPurpose::Password
+            && self.native_window().isKeyWindow();
+        self.secure_input.set_requested(requested);
+    }
+
     fn move_traffic_light(&mut self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
             if self.is_fullscreen() && !self.is_exiting_fullscreen {
@@ -1136,6 +1145,8 @@ impl MacWindow {
                 close_callback: None,
                 appearance_changed_callback: None,
                 input_handler: None,
+                text_input_purpose: TextInputPurpose::Normal,
+                secure_input: Default::default(),
                 last_key_equivalent: None,
                 last_left_mouse_down_event: None,
                 synthetic_drag_counter: 0,
@@ -1400,6 +1411,7 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
+        this.secure_input.set_requested(false);
         // `accesskit_macos::SubclassingAdapter::for_window` strong-retains the
         // window's content view, and that content view keeps the `GPUIView` it
         // hosts alive. Together with the `Rc<Mutex<MacWindowState>>` parked in
@@ -1720,6 +1732,14 @@ impl PlatformWindow for MacWindow {
                 on: modifiers.contains(NSEventModifierFlags::CapsLock),
             }
         }
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        // App activity is owned by the delegate; a redraw during WillResignActive
+        // must not re-enable secure input from AppKit's still-true isActive flag.
+        let mut state = self.0.lock();
+        state.text_input_purpose = configuration.purpose;
+        state.update_secure_input();
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -3217,8 +3237,9 @@ fn report_display_change(window_state: &Rc<Mutex<MacWindowState>>) {
 extern "C" fn window_did_change_key_status(this: &AnyObject, selector: Sel, _: *mut AnyObject) {
     let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.lock();
+    let mut lock = window_state.lock();
     let is_active = lock.native_window().isKeyWindow();
+    lock.update_secure_input();
 
     // AppKit also unhides the cursor on activation changes, so mirror that here.
     lock.cursor_visible.store(true, Ordering::Relaxed);

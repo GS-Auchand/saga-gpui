@@ -330,6 +330,7 @@ mod tests {
     #[gpui::test]
     fn text_input_configuration_and_focus_state_are_forwarded_on_change(cx: &mut TestAppContext) {
         let custom = TextInputConfiguration {
+            purpose: crate::TextInputPurpose::Password,
             autocorrect: true,
             input_action: TextInputAction::Send,
             ..Default::default()

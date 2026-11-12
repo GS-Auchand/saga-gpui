@@ -107,8 +107,8 @@ use gpui::{
     KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta,
-    ScrollEvent, ScrollSource, SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind,
-    WindowParams, point, px, size,
+    ScrollEvent, ScrollSource, SharedString, Size, TextInputPurpose, TouchPhase,
+    WindowButtonLayout, WindowKind, WindowParams, point, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -419,6 +419,7 @@ pub(crate) struct WaylandClientState {
     registrations: Vec<RegistrationToken>,
     pub common: Rc<RefCell<LinuxCommon>>,
     ime_enabled: Option<bool>,
+    ime_purpose: TextInputPurpose,
 }
 
 struct DragState<DataOffer = wl_data_offer::WlDataOffer, Window = WaylandWindowStatePtr> {
@@ -560,6 +561,18 @@ pub(crate) enum PendingActivation {
 }
 
 impl WaylandClientState {
+    fn disable_ime(&mut self) {
+        self.ime_enabled = Some(false);
+        self.ime_purpose = TextInputPurpose::Normal;
+        self.composing = false;
+        self.ime_pre_edit = None;
+        if let Some(text_input) = &self.text_input {
+            text_input.set_content_type(ContentHint::None, ContentPurpose::Normal);
+            text_input.disable();
+            text_input.commit();
+        }
+    }
+
     fn consume_startup_activation_token(&mut self, surface: &wl_surface::WlSurface) {
         let Some(startup_activation_token) = self.startup_activation_token.take() else {
             return;
@@ -710,17 +723,50 @@ impl WaylandClientStatePtr {
         true
     }
 
+    // UNVALIDATED on a real compositor until the native lifecycle checks run.
+    pub fn set_ime_purpose(&self, purpose: TextInputPurpose) {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        if state.ime_purpose == purpose {
+            return;
+        }
+        state.ime_purpose = purpose;
+        state.composing = false;
+        state.ime_pre_edit = None;
+        if let Some(text_input) = &state.text_input {
+            if state.ime_enabled == Some(true) {
+                let (hint, purpose) = ime_content_type(purpose);
+                text_input.set_content_type(hint, purpose);
+                text_input.commit();
+            }
+        } else if purpose == TextInputPurpose::Password {
+            log::error!(target: "gpui::secure_input", "wayland-text-input-v3-unavailable");
+        }
+    }
+
     pub fn enable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         state.ime_enabled = Some(true);
+        state.ime_purpose = state
+            .keyboard_focused_window
+            .as_ref()
+            .map_or(TextInputPurpose::Normal, |window| {
+                window.text_input_purpose()
+            });
+        state.composing = false;
+        state.ime_pre_edit = None;
         state.last_ime_cursor_rectangle = None;
         let Some(text_input) = state.text_input.take() else {
+            if state.ime_purpose == TextInputPurpose::Password {
+                log::error!(target: "gpui::secure_input", "wayland-text-input-v3-unavailable");
+            }
             return;
         };
 
         text_input.enable();
-        text_input.set_content_type(ContentHint::None, ContentPurpose::Normal);
+        let (hint, purpose) = ime_content_type(state.ime_purpose);
+        text_input.set_content_type(hint, purpose);
         let mut cursor_rectangle = None;
         if let Some(window) = state.keyboard_focused_window.clone() {
             drop(state);
@@ -739,12 +785,7 @@ impl WaylandClientStatePtr {
     pub fn disable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
-        state.ime_enabled = Some(false);
-        state.composing = false;
-        if let Some(text_input) = &state.text_input {
-            text_input.disable();
-            text_input.commit();
-        }
+        state.disable_ime();
     }
 
     pub fn ime_enabled(&self) -> Option<bool> {
@@ -815,6 +856,9 @@ impl WaylandClientStatePtr {
             && !window.ptr_eq(&closed_window)
         {
             state.keyboard_focused_window = Some(window);
+        }
+        if state.keyboard_focused_window.is_none() {
+            state.disable_ime();
         }
         if let Some(window) = state.cursor_hidden_window.take()
             && !window.ptr_eq(&closed_window)
@@ -1142,6 +1186,7 @@ impl WaylandConnection {
             },
             registrations: Vec::new(),
             ime_enabled: None,
+            ime_purpose: TextInputPurpose::Normal,
         }));
 
         // From here on, `Drop` removes whatever was registered if a later step fails.
@@ -2073,6 +2118,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             wl_keyboard::Event::Leave { surface, .. } => {
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
+                state.disable_ime();
                 state.enter_token.take();
                 // Prevent keyboard events from repeating after opening e.g. a file chooser and closing it quickly
                 state.repeat.current_id += 1;
@@ -3432,5 +3478,15 @@ mod tests {
             text_input.cursor_rectangles.borrow().as_slice(),
             &[(10, 20, 1, 18)]
         );
+    }
+}
+
+fn ime_content_type(purpose: TextInputPurpose) -> (ContentHint, ContentPurpose) {
+    match purpose {
+        TextInputPurpose::Normal => (ContentHint::None, ContentPurpose::Normal),
+        TextInputPurpose::Password => (
+            ContentHint::HiddenText | ContentHint::SensitiveData,
+            ContentPurpose::Password,
+        ),
     }
 }
