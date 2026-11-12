@@ -1437,6 +1437,19 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Mark this accessible dialog as modal. This does not trap keyboard focus.
+    fn aria_modal(mut self, modal: bool) -> Self {
+        self.interactivity().aria.modal = Some(modal);
+        self
+    }
+
+    /// Hide this accessible subtree. This does not change painting or keyboard focus;
+    /// callers must move focus outside the subtree before hiding it.
+    fn aria_hidden(mut self, hidden: bool) -> Self {
+        self.interactivity().aria.hidden = Some(hidden);
+        self
+    }
+
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
         self.interactivity().aria.selected = Some(selected);
@@ -2203,6 +2216,8 @@ pub(crate) struct AriaProperties {
     pub(crate) description: Option<SharedString>,
     pub(crate) keyshortcuts: Option<SharedString>,
     pub(crate) selected: Option<bool>,
+    pub(crate) modal: Option<bool>,
+    pub(crate) hidden: Option<bool>,
     pub(crate) expanded: Option<bool>,
     pub(crate) toggled: Option<accesskit::Toggled>,
     pub(crate) numeric_value: Option<f64>,
@@ -3647,6 +3662,20 @@ impl Interactivity {
         }
         if let Some(selected) = self.aria.selected {
             node.set_selected(selected);
+        }
+        if let Some(modal) = self.aria.modal {
+            if modal {
+                node.set_modal();
+            } else {
+                node.clear_modal();
+            }
+        }
+        if let Some(hidden) = self.aria.hidden {
+            if hidden {
+                node.set_hidden();
+            } else {
+                node.clear_hidden();
+            }
         }
         if let Some(expanded) = self.aria.expanded {
             node.set_expanded(expanded);
@@ -5462,6 +5491,19 @@ mod tests {
         assert_eq!(node.min_numeric_value(), Some(6.0));
         assert_eq!(node.max_numeric_value(), Some(72.0));
         assert_eq!(node.numeric_value_step(), Some(1.0));
+    }
+
+    #[test]
+    fn test_modal_and_hidden_flags_are_independent_and_can_be_cleared() {
+        let mut node = accesskit::Node::new(accesskit::Role::Dialog);
+        assert!(!node.is_modal());
+        assert!(!node.is_hidden());
+        for (modal, hidden) in [(true, false), (false, true), (true, true), (false, false)] {
+            let mut element = div().id("modal-flags").aria_modal(modal).aria_hidden(hidden);
+            element.interactivity().write_a11y_info(&mut node);
+            assert_eq!(node.is_modal(), modal);
+            assert_eq!(node.is_hidden(), hidden);
+        }
     }
 
     /// Two focusable, clickable elements ("a" and "b") used to exercise the

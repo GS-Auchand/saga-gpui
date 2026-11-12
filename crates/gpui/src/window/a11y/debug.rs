@@ -267,6 +267,8 @@ fn node_to_json(
     }
 
     // Boolean / enum states.
+    aria.insert("modal".into(), json!(node.is_modal()));
+    aria.insert("hidden".into(), json!(node.is_hidden()));
     if let Some(v) = node.is_selected() {
         aria.insert("selected".into(), json!(v));
     }
@@ -335,4 +337,24 @@ fn ephemeral_id(mut index: usize) -> String {
     }
     bytes.reverse();
     String::from_utf8(bytes).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_capture_exports_modal_and_hidden_flags_including_false() {
+        let mut node = accesskit::Node::new(accesskit::Role::Dialog);
+        let names = FxHashMap::default();
+        let provenance = NodeProvenance::default();
+        let value = node_to_json(NodeId(1), &node, &names, &provenance);
+        assert_eq!(value["aria"]["modal"], false);
+        assert_eq!(value["aria"]["hidden"], false);
+        node.set_modal();
+        node.set_hidden();
+        let value = node_to_json(NodeId(1), &node, &names, &provenance);
+        assert_eq!(value["aria"]["modal"], true);
+        assert_eq!(value["aria"]["hidden"], true);
+    }
 }
