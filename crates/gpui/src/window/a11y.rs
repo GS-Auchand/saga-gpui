@@ -717,7 +717,7 @@ mod tests {
                 a11y.sync_active_flag();
                 assert_eq!(a11y.is_active(), !force_disabled);
                 assert_eq!(a11y.is_native_active(), native && !force_disabled);
-                assert_eq!(flag.load(Ordering::SeqCst), native);
+                assert_eq!(flag.load(std::sync::atomic::Ordering::SeqCst), native);
                 a11y.set_synthetic_capture_for_test(false);
                 a11y.sync_active_flag();
                 assert_eq!(a11y.is_active(), native && !force_disabled);

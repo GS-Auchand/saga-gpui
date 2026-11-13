@@ -824,6 +824,44 @@ pub enum PlatformInput {
 }
 
 impl PlatformInput {
+    // Platform callbacks are in display-logical coordinates. Internal dispatch (including
+    // accessibility activation and recognized touch gestures) is already in app coordinates.
+    pub(crate) fn into_application_coordinates(mut self, scale: f32) -> Self {
+        match &mut self {
+            Self::MouseDown(event) => event.position = event.position / scale,
+            Self::MouseUp(event) => event.position = event.position / scale,
+            Self::MouseMove(event) => event.position = event.position / scale,
+            Self::MouseExited(event) => event.position = event.position / scale,
+            Self::Scroll(event) => {
+                event.position = event.position / scale;
+                if let ScrollDelta::Pixels(delta) = &mut event.delta {
+                    *delta = *delta / scale;
+                }
+            }
+            Self::Pinch(event) => event.position = event.position / scale,
+            Self::LongPress(event) => {
+                event.position = event.position / scale;
+                event.start_position = event.start_position / scale;
+            }
+            Self::TouchDrag(event) => {
+                event.position = event.position / scale;
+                event.start_position = event.start_position / scale;
+            }
+            Self::BackGesture(event) => event.start_position = event.start_position / scale,
+            Self::Touch(event) => {
+                event.position = event.position / scale;
+                event.predicted_position = event.predicted_position.map(|point| point / scale);
+            }
+            Self::FileDrop(FileDropEvent::Entered { position, .. }
+                | FileDropEvent::Pending { position }
+                | FileDropEvent::Submit { position }) => *position = *position / scale,
+            Self::FileDrop(FileDropEvent::Exited | FileDropEvent::Ended)
+                | Self::KeyDown(_) | Self::KeyUp(_) | Self::ModifiersChanged(_)
+                | Self::MousePressure(_) => {}
+        }
+        self
+    }
+
     pub(crate) fn mouse_event(&self) -> Option<&dyn Any> {
         match self {
             PlatformInput::KeyDown { .. } => None,

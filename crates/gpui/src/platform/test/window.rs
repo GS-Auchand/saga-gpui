@@ -59,6 +59,10 @@ pub(crate) struct TestWindowState {
     appearance: WindowAppearance,
     external_drag_files: Vec<(PathBuf, bool)>,
     start_external_drag_result: bool,
+    pub(crate) input_region: Option<Vec<Bounds<Pixels>>>,
+    pub(crate) ime_position: Option<Bounds<Pixels>>,
+    pub(crate) client_inset: Option<Pixels>,
+    pub(crate) client_corner_radii: Option<crate::Corners<Pixels>>,
 }
 
 #[derive(Clone)]
@@ -135,6 +139,10 @@ impl TestWindow {
             appearance: WindowAppearance::Light,
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
+            input_region: None,
+            ime_position: None,
+            client_inset: None,
+            client_corner_radii: None,
         })))
     }
     pub fn simulate_close(&self) {
@@ -315,6 +323,16 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
+    fn set_input_region(&self, region: Option<&[Bounds<Pixels>]>) {
+        self.0.lock().input_region = region.map(<[Bounds<Pixels>]>::to_vec);
+    }
+    fn set_client_inset(&self, inset: Pixels) {
+        self.0.lock().client_inset = Some(inset);
+    }
+    fn set_client_corner_radii(&self, radii: crate::Corners<Pixels>) {
+        self.0.lock().client_corner_radii = Some(radii);
+    }
+
     fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
         let state = self.0.lock();
         state
@@ -614,7 +632,9 @@ impl PlatformWindow for TestWindow {
         state.start_external_drag_result
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        self.0.lock().ime_position = Some(bounds);
+    }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
