@@ -224,6 +224,7 @@ fn measure(
 fn prepare(
     baseline: &SumTree<ListItem>,
     viewport: Bounds<Pixels>,
+    alignment: ListAlignment,
     overdraw: Pixels,
     requested: Option<ListOffset>,
     remaining: &mut usize,
@@ -312,6 +313,21 @@ fn prepare(
         }
         placed.reverse();
     }
+    // Short content in a top-aligned viewport must be shaped again at the top:
+    // position-dependent widths can change when it moves into an ornament.
+    if alignment == ListAlignment::Top
+        && placed.first().is_some_and(|item| item.layout.index == 0 && item.origin.y > viewport.top())
+    {
+        let mut top = viewport.top();
+        let mut leading = Vec::new();
+        for index in 0..count {
+            let item = measure(index, context(PositionedEdge::Top(top)), remaining, render, window, cx)?;
+            top = item.origin.y + item.layout.size.height;
+            leading.push(item);
+            if top > viewport.bottom() { break; }
+        }
+        if leading.len() == count && top <= viewport.bottom() { placed = leading; }
+    }
     let anchor = placed
         .iter()
         .find(|item| item.origin.y + item.layout.size.height > viewport.top())
@@ -347,7 +363,8 @@ fn prepare(
 }
 
 impl ListState {
-    /// Experimental definite-width, synchronous, bottom-aligned positioned path.
+    /// Experimental definite-width, synchronous positioned path.
+    /// Top alignment affects short content only; overflowing tails stay anchored.
     /// Caller retains normal Element request_layout and calls frame.paint after
     /// success. No state is published on measurement or reveal failure.
     pub fn prepaint_positioned(
@@ -367,7 +384,6 @@ impl ListState {
     ) -> Result<PositionedFrame, PositionedListError> {
         let state = &mut *self.0.borrow_mut();
         if state.item_measurement_ready.is_some()
-            || state.alignment != ListAlignment::Bottom
             || state.measuring_behavior != ListMeasuringBehavior::Visible
             || state
                 .scroll_anchor
@@ -438,6 +454,7 @@ impl ListState {
                 let mut candidate = prepare(
                     &baseline,
                     viewport,
+                    state.alignment,
                     state.overdraw,
                     requested,
                     &mut remaining,
@@ -565,5 +582,39 @@ impl PositionedFrame {
                 }
             },
         );
+    }
+}
+
+
+#[cfg(test)]
+mod alignment_tests {
+    use super::*;
+    use crate::{self as gpui, IntoElement, Styled, TestAppContext, canvas, div};
+    use std::{cell::RefCell, rc::Rc};
+
+    #[gpui::test]
+    fn positioned_short_top_flow_preserves_long_follow_tail(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        for (count, alignment) in [(2, ListAlignment::Top), (20, ListAlignment::Top), (2, ListAlignment::Bottom)] {
+            let state = ListState::new(count, alignment, px(0.));
+            state.set_follow_mode(FollowMode::Tail);
+            let output = Rc::new(RefCell::new(Vec::new()));
+            let recorded = output.clone();
+            let painted = state.clone();
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), move |_, _| {
+                canvas(move |bounds, window, cx| {
+                    let frame = painted.prepaint_positioned(bounds, Edges::default(), 100, px(20.), |_, context, _, _| {
+                        let top = match context.edge { PositionedEdge::Top(top) => top, PositionedEdge::Bottom(bottom) => bottom - px(20.) };
+                        Ok(PositionedItem { element: div().w_full().h(px(20.)).into_any_element(), top, baseline: size(context.width, px(20.)) })
+                    }, window, cx).expect("positioned frame");
+                    *recorded.borrow_mut() = frame.placed.iter().map(|item| (item.layout.index, item.origin.y, item.layout.size.height)).collect();
+                    frame
+                }, |_, mut frame, window, cx| frame.paint(window, cx)).size_full()
+            });
+            assert!(state.is_following_tail());
+            let rows = output.borrow();
+            if count == 2 { assert_eq!(rows[0].1, if alignment == ListAlignment::Top {px(0.)} else {px(60.)}); }
+            else { let last = rows.last().expect("tail row"); assert_eq!(last.0, 19); assert_eq!(last.1 + last.2, px(100.)); }
+        }
     }
 }
