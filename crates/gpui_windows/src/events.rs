@@ -1635,6 +1635,34 @@ fn parse_immutable(vkey: VIRTUAL_KEY) -> Option<String> {
     )
 }
 
+// Windows distinguishes keypad Return with the extended-key bit. Preserve it
+// before logical-key normalization; unlike keypad digits this is independent
+// of NumLock and shares the ordinary Return scan code.
+fn parse_immutable_physical(vkey: VIRTUAL_KEY, lparam: LPARAM) -> Option<String> {
+    if vkey == VK_RETURN && lparam.0 & (1 << 24) != 0 {
+        Some("numpadenter".into())
+    } else {
+        parse_immutable(vkey)
+    }
+}
+
+#[cfg(test)]
+mod numpad_enter_tests {
+    use super::*;
+
+    #[test]
+    fn extended_return_retains_identity_without_changing_other_keys() {
+        for repeat_flags in [0, 1 << 30, (1 << 30) | (1 << 31)] {
+            let ordinary = LPARAM(repeat_flags | (0x1c << 16) | 1);
+            let keypad = LPARAM(ordinary.0 | (1 << 24));
+            assert_eq!(parse_immutable_physical(VK_RETURN, ordinary).as_deref(), Some("enter"));
+            assert_eq!(parse_immutable_physical(VK_RETURN, keypad).as_deref(), Some("numpadenter"));
+            assert_eq!(parse_immutable_physical(VK_DELETE, keypad), parse_immutable(VK_DELETE));
+            assert_eq!(parse_immutable_physical(VK_TAB, keypad), parse_immutable(VK_TAB));
+        }
+    }
+}
+
 fn parse_normal_key(
     vkey: VIRTUAL_KEY,
     lparam: LPARAM,
@@ -1642,7 +1670,7 @@ fn parse_normal_key(
 ) -> Option<(Keystroke, bool)> {
     let (key_char, prefer_character_input) = process_key(vkey, lparam.hiword());
 
-    let key = parse_immutable(vkey).or_else(|| {
+    let key = parse_immutable_physical(vkey, lparam).or_else(|| {
         let scan_code = lparam.hiword() & 0xFF;
         get_keystroke_key(vkey, scan_code as u32, &mut modifiers)
     })?;
