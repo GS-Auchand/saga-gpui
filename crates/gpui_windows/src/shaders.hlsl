@@ -6,7 +6,10 @@ cbuffer GlobalParams: register(b0) {
     float grayscale_enhanced_contrast;
     float subpixel_enhanced_contrast;
     uint is_bgr;
-    uint3 global_pad;
+    // Window-space origin of the region the path render targets currently
+    // cover. Only the path rasterization pass reads it.
+    float2 global_path_target_origin;
+    uint global_pad;
 };
 
 cbuffer BatchParams: register(b1) {
@@ -1020,7 +1023,10 @@ float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
     GradientColor gradient = prepare_gradient_color(
         background.tag, background.color_space, background.solid, background.colors);
 
-    float4 color = gradient_color(background, input.position.xy, bounds,
+    // The path targets cover only the batch's region, so SV_Position is
+    // relative to that region. Shift it back into window space.
+    float2 window_position = input.position.xy + global_path_target_origin;
+    float4 color = gradient_color(background, window_position, bounds,
         gradient.solid, gradient.color0, gradient.color1);
     return float4(color.rgb * color.a * alpha, alpha * color.a);
 }
@@ -1033,6 +1039,8 @@ float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
 
 struct PathSprite {
     Bounds bounds;
+    // The window-space rectangle that the path intermediate texture covers.
+    Bounds texture_bounds;
 };
 
 struct PathSpriteVertexOutput {
@@ -1050,7 +1058,7 @@ PathSpriteVertexOutput path_sprite_vertex(uint vertex_id: SV_VertexID, uint spri
     float4 device_position = to_device_position(unit_vertex, sprite.bounds);
 
     float2 screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
-    float2 texture_coords = screen_position / global_viewport_size;
+    float2 texture_coords = (screen_position - sprite.texture_bounds.origin) / sprite.texture_bounds.size;
 
     PathSpriteVertexOutput output;
     output.position = device_position;
