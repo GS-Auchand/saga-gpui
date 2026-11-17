@@ -137,6 +137,49 @@ impl PathTargets {
 
 /// The device-pixel rectangle (x, y, width, height) covering every path in
 /// `paths`, clamped to the window.
+/// Splits a path batch into groups whose bounds never touch, or None when the
+/// batch is already one group. Each group is rasterized through targets sized to
+/// it alone: a few small paths at opposite corners (caption glyphs, a panel
+/// meter) otherwise forced a window-sized 4x MSAA target. Disjoint groups cannot
+/// overlap, so drawing them one after another composites the same pixels.
+fn path_clusters(paths: &[Path<ScaledPixels>]) -> Option<Vec<Vec<Path<ScaledPixels>>>> {
+    if paths.len() < 2 {
+        return None;
+    }
+    // Two pixels covers the anti-aliased fringe outside clipped_bounds.
+    let bounds: Vec<_> = paths
+        .iter()
+        .map(|path| path.clipped_bounds().dilate(ScaledPixels(2.0)))
+        .collect();
+    let mut parent: Vec<usize> = (0..paths.len()).collect();
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    for i in 0..paths.len() {
+        for j in i + 1..paths.len() {
+            if bounds[i].intersects(&bounds[j]) {
+                let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                if a != b {
+                    parent[b] = a;
+                }
+            }
+        }
+    }
+    let mut groups: Vec<(usize, Vec<Path<ScaledPixels>>)> = Vec::new();
+    for (i, path) in paths.iter().enumerate() {
+        let r = root(&mut parent, i);
+        match groups.iter_mut().find(|(key, _)| *key == r) {
+            Some((_, group)) => group.push(path.clone()),
+            None => groups.push((r, vec![path.clone()])),
+        }
+    }
+    (groups.len() > 1).then(|| groups.into_iter().map(|(_, group)| group).collect())
+}
+
 fn path_batch_region(
     paths: &[Path<ScaledPixels>],
     window_width: u32,
@@ -464,8 +507,16 @@ impl DirectXRenderer {
                 PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
-                    self.draw_paths_to_intermediate(paths)?;
-                    self.draw_paths_from_intermediate(paths)
+                    match path_clusters(paths) {
+                        None => {
+                            self.draw_paths_to_intermediate(paths)?;
+                            self.draw_paths_from_intermediate(paths)
+                        }
+                        Some(clusters) => clusters.iter().try_for_each(|cluster| {
+                            self.draw_paths_to_intermediate(cluster)?;
+                            self.draw_paths_from_intermediate(cluster)
+                        }),
+                    }
                 }
                 PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
                 PrimitiveBatch::MonochromeSprites { texture_id, range } => {
