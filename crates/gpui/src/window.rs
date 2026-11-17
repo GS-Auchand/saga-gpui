@@ -2261,8 +2261,18 @@ impl Window {
             Box::new(move || {
                 handle
                     .update(&mut cx, |_, window, _cx| {
+                        // A drag area answers only where it is the topmost hitbox, so any
+                        // element painted over it (a button, a link, a menu) keeps its
+                        // clicks, like Electron's no-drag descendants. The caption areas
+                        // keep matching anywhere under the pointer.
+                        let topmost = window.mouse_hit_test.ids.first();
                         for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
-                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
+                            let hit = if *area == WindowControlArea::Drag {
+                                topmost == Some(&hitbox.id)
+                            } else {
+                                window.mouse_hit_test.ids.contains(&hitbox.id)
+                            };
+                            if hit {
                                 return Some(*area);
                             }
                         }
