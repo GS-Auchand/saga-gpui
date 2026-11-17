@@ -35,6 +35,10 @@ const PATH_TARGETS_SIZE_STEP: u32 = 64;
 // one part in this many of their area.
 const PATH_TARGETS_OVERSIZE_FACTOR: u64 = 4;
 const MAX_INSTANCE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
+// A frame that ends at least this long after the previous one counts as quiet.
+const QUIET_FRAME_GAP: std::time::Duration = std::time::Duration::from_millis(200);
+// The shortest time between two device trims.
+const DEVICE_TRIM_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(crate) struct FontInfo {
     pub gamma_ratios: [f32; 4],
@@ -61,6 +65,9 @@ pub(crate) struct DirectXRenderer {
     /// In that case we want to discard the first frame that we draw as we got reset in the middle of a frame
     /// meaning we lost all the allocated gpu textures and scene resources.
     skip_draws: bool,
+
+    last_frame_end: Option<std::time::Instant>,
+    last_device_trim: Option<std::time::Instant>,
 }
 
 /// Direct3D objects
@@ -320,6 +327,8 @@ impl DirectXRenderer {
             width: 1,
             height: 1,
             skip_draws: false,
+            last_frame_end: None,
+            last_device_trim: None,
         })
     }
 
@@ -546,6 +555,7 @@ impl DirectXRenderer {
             })?;
         }
         self.trim_path_targets();
+        self.trim_device_when_quiet();
         Ok(())
     }
 
@@ -563,7 +573,6 @@ impl DirectXRenderer {
         let Some(path_targets) = resources.path_targets.as_ref() else {
             return;
         };
-        let idle = used.is_none();
         let release = match used {
             Some((width, height)) => {
                 let (width, height) =
@@ -590,11 +599,28 @@ impl DirectXRenderer {
         }
         resources.path_targets = None;
         resources.path_targets_last_used = None;
-        // A window gone quiet hands the driver's freed heap pages back. Without
-        // this the driver keeps every chunk it ever grew to, committed, for the
-        // life of the device (all windows share it).
-        let devices = self.devices.as_ref().filter(|_| idle);
-        if let Some(devices) = devices {
+    }
+
+    /// Called at the end of each frame. When the window is drawing slowly (its
+    /// previous frame ended at least `QUIET_FRAME_GAP` ago), hands the driver's
+    /// freed heap pages back, at most once per `DEVICE_TRIM_INTERVAL`. Without
+    /// this the driver keeps every chunk it ever grew to committed for the life
+    /// of the device, which all windows share.
+    fn trim_device_when_quiet(&mut self) {
+        let now = std::time::Instant::now();
+        let quiet = self
+            .last_frame_end
+            .is_some_and(|end| now.duration_since(end) >= QUIET_FRAME_GAP);
+        self.last_frame_end = Some(now);
+        if !quiet
+            || self
+                .last_device_trim
+                .is_some_and(|trim| now.duration_since(trim) < DEVICE_TRIM_INTERVAL)
+        {
+            return;
+        }
+        self.last_device_trim = Some(now);
+        if let Some(devices) = self.devices.as_ref() {
             unsafe {
                 devices.device_context.Flush();
                 if let Ok(dxgi) = devices.device.cast::<IDXGIDevice3>() {
