@@ -563,6 +563,7 @@ impl DirectXRenderer {
         let Some(path_targets) = resources.path_targets.as_ref() else {
             return;
         };
+        let idle = used.is_none();
         let release = match used {
             Some((width, height)) => {
                 let (width, height) =
@@ -589,6 +590,18 @@ impl DirectXRenderer {
         }
         resources.path_targets = None;
         resources.path_targets_last_used = None;
+        // A window gone quiet hands the driver's freed heap pages back. Without
+        // this the driver keeps every chunk it ever grew to, committed, for the
+        // life of the device (all windows share it).
+        let devices = self.devices.as_ref().filter(|_| idle);
+        if let Some(devices) = devices {
+            unsafe {
+                devices.device_context.Flush();
+                if let Ok(dxgi) = devices.device.cast::<IDXGIDevice3>() {
+                    dxgi.Trim();
+                }
+            }
+        }
     }
 
     /// Render `scene` to an offscreen CPU image **without presenting** so
